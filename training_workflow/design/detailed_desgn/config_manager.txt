@@ -1,0 +1,46 @@
+# CONFIG MANAGER
+
+## Purpose
+Manage experiment configurations with versioning.
+
+## Responsibilities
+1. Load/save configurations from YAML/JSON files
+2. Provide methods to override default values
+3. Validate configuration schema
+4. Track configuration versions
+
+## Responsibility Clarification
+The Config Manager is the ONLY component responsible for:
+- Managing configuration files and their formats
+- Handling configuration versioning
+- Validating configuration schemas
+- Providing a consistent interface for configuration access
+
+Other components (Training Job, Experiment Manager) use the Config Manager
+to access and manipulate configurations but do not directly manage configuration
+files or versioning.
+
+## Interface
+
+
+class ConfigManager:
+@staticmethod
+def load(config_path: str) -> Config
+@staticmethod
+def save(config: Config, path: str) -> str
+@staticmethod
+def create_default(experiment_type: str) -> Config
+class Config:
+def init(self, config_dict: Dict)
+def update(self, updates: Dict) -> None
+def get(self, key: str, default=None) -> Any
+def to_dict(self) -> Dict
+def save(self, path: str) -> str
+
+
+
+
+## Storage Format
+- YAML/JSON files in a `configs/` directory
+- Naming convention: `{experiment_name}_{version}.yaml`
+- Version tracking through filename and metadata inside config

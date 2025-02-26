@@ -1,0 +1,446 @@
+# TRAINING JOB
+
+## Purpose
+Execute training runs with proper configuration and environment setup.
+
+## Responsibilities
+1. Load datasets and configurations
+2. Set up training environment
+3. Execute training script
+4. Save artifacts and metrics
+5. Track job status and results
+
+## Responsibility Clarification
+The Training Job is the ONLY component responsible for:
+- Setting up the execution environment (GPU selection, variables)
+- Managing computational resources
+- Executing the training script
+- Tracking job status (running, completed, failed)
+- Managing the job lifecycle
+
+The Training Job delegates ALL logging and artifact storage to the Training Tracker,
+which in turn uses the Artifact Manager for persistent storage.
+
+The Training Script should focus ONLY on the training algorithm and model logic,
+leaving environment setup, resource management, and artifact storage to the Training Job
+and Training Tracker.
+
+## Interface
+
+from typing import Dict, List, Any, Optional, Union
+import os
+import subprocess
+import sys
+import json
+import time
+import signal
+from pathlib import Path
+import importlib.util
+import shutil
+from experiment_module.config import Config
+from experiment_module.tracking import TrainingTracker
+
+class TrainingJob:
+    def __init__(self, 
+                 job_id: str,
+                 experiment_name: str,
+                 training_script: str,
+                 config: Config,
+                 dataset_path: str,
+                 output_dir: Optional[str] = None,
+                 framework: str = "pytorch",
+                 script_args: Optional[List[str]] = None,
+                 resource_requirements: Optional[Dict[str, Any]] = None):
+        """
+        Initialize training job
+        
+        Args:
+            job_id: Unique identifier for the job
+            experiment_name: Name of the experiment
+            training_script: Path to training script
+            config: Configuration for the job
+            dataset_path: Path to dataset
+            output_dir: Directory for outputs (default: experiments/{experiment_name}/{job_id})
+            framework: ML framework used ("pytorch", "tensorflow", "jax", etc.)
+            script_args: Additional command-line arguments for the script
+            resource_requirements: Dict specifying resource needs (memory, cpu_cores, etc.)
+        """
+        self._job_id = job_id
+        self._experiment_name = experiment_name
+        self._training_script = Path(training_script)
+        self._config = config
+        self._dataset_path = Path(dataset_path)
+        self._framework = framework.lower()
+        self._script_args = script_args or []
+        self._resource_requirements = resource_requirements or {}
+        
+        # Set up output directory
+        if output_dir is None:
+            self.output_dir = Path(f"experiments/{experiment_name}/{job_id}")
+        else:
+            self.output_dir = Path(output_dir)
+            
+        # Create output directory
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Save configuration in multiple formats for maximum compatibility
+        config_path = self.output_dir / "config.yaml"
+        self._config.save(str(config_path))
+        
+        # Also save as JSON for scripts that prefer it
+        config_json_path = self.output_dir / "config.json"
+        with open(config_json_path, "w") as f:
+            json.dump(self._config.to_dict(), f, indent=2)
+        
+        # Copy training script to job directory for reproducibility
+        script_dir = self.output_dir / "scripts"
+        os.makedirs(script_dir, exist_ok=True)
+        script_copy_path = script_dir / self._training_script.name
+        shutil.copy2(self._training_script, script_copy_path)
+        
+        # Initialize job metadata
+        self._status = "not_started"
+        self._start_time = None
+        self._end_time = None
+        self._process = None
+        self._save_metadata()
+    
+    def run(self, gpu_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Run the training job
+        
+        Args:
+            gpu_id: GPU ID to use for training (if applicable)
+            
+        Returns:
+            Dictionary with job results
+        """
+        if self._status == "running":
+            raise RuntimeError(f"Job {self._job_id} is already running")
+        
+        if self._status == "completed":
+            print(f"Job {self._job_id} already completed, returning previous results")
+            return self._load_results()
+        
+        # Update status and timing
+        self._status = "running"
+        self._start_time = time.time()
+        self._save_metadata()
+        
+        try:
+            # Execute training script
+            if self._training_script.suffix == '.py':
+                results = self._run_as_subprocess(gpu_id)
+            else:
+                results = self._run_as_module()
+            
+            # Update status
+            self._status = "completed"
+            self._end_time = time.time()
+            self._save_metadata()
+            
+            return results
+            
+        except Exception as e:
+            # Update status on failure
+            self._status = "failed"
+            self._end_time = time.time()
+            self._save_metadata()
+            
+            # Save error information
+            error_path = self.output_dir / "error.log"
+            with open(error_path, "w") as f:
+                f.write(f"Error: {str(e)}\n")
+            
+            raise
+    
+    def _run_as_subprocess(self, gpu_id: Optional[int] = None) -> Dict[str, Any]:
+        """Run training script as a subprocess with enhanced compatibility"""
+        # Prepare environment variables
+        env = os.environ.copy()
+        env.update({
+            "EXPERIMENT_NAME": self._experiment_name,
+            "JOB_ID": self._job_id,
+            "CONFIG_PATH": str(self.output_dir / "config.yaml"),
+            "CONFIG_JSON_PATH": str(self.output_dir / "config.json"),
+            "DATASET_PATH": str(self._dataset_path),
+            "OUTPUT_DIR": str(self.output_dir),
+            "FRAMEWORK": self._framework
+        })
+        
+        # Set GPU if specified
+        if gpu_id is not None:
+            env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        
+        # Add resource requirements to environment
+        for key, value in self._resource_requirements.items():
+            env[f"RESOURCE_{key.upper()}"] = str(value)
+        
+        # Build command with script arguments
+        cmd = [sys.executable, str(self._training_script)] + self._script_args
+        
+        # Open log files
+        stdout_path = self.output_dir / "stdout.log"
+        stderr_path = self.output_dir / "stderr.log"
+        
+        with open(stdout_path, "w") as stdout_file, open(stderr_path, "w") as stderr_file:
+            self._process = subprocess.Popen(
+                cmd, 
+                env=env,
+                stdout=stdout_file,
+                stderr=stderr_file,
+                universal_newlines=True
+            )
+            
+            # Wait for process to complete
+            self._process.wait()
+        
+        # Check return code
+        if self._process.returncode != 0:
+            raise RuntimeError(f"Training script failed with code {self._process.returncode}")
+        
+        # Try to load results from various possible locations
+        for result_file in ["results.json", "metrics/results.json", "output.json"]:
+            result_path = self.output_dir / result_file
+            if result_path.exists():
+                with open(result_path, "r") as f:
+                    return json.load(f)
+        
+        # If no results file found, return basic status
+        return {"status": "completed"}
+    
+    def _run_as_module(self) -> Dict[str, Any]:
+        """Import and run training script as a module with enhanced compatibility"""
+        # Create tracker for this job
+        from experiment_module.tracking import TrainingTracker
+        tracker = TrainingTracker(
+            experiment_name=self._experiment_name,
+            job_id=self._job_id,
+            log_dir=str(self.output_dir)
+        )
+        
+        try:
+            # Import the module
+            spec = importlib.util.spec_from_file_location(
+                "training_module", self._training_script
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            
+            # Prepare arguments
+            args = {
+                "config": self._config,
+                "config_dict": self._config.to_dict(),  # For scripts that prefer dict
+                "dataset_path": str(self._dataset_path),
+                "output_dir": str(self.output_dir),
+                "tracker": tracker,
+                "experiment_name": self._experiment_name,
+                "job_id": self._job_id,
+                "framework": self._framework,
+                "resource_requirements": self._resource_requirements
+            }
+            
+            # Try different entry points for maximum compatibility
+            if hasattr(module, "main"):
+                results = module.main(**args)
+            elif hasattr(module, "train"):
+                results = module.train(**args)
+            elif hasattr(module, "run"):
+                results = module.run(**args)
+            else:
+                # Last resort: look for any callable that might be the entry point
+                entry_points = [name for name, obj in module.__dict__.items() 
+                               if callable(obj) and not name.startswith('_')]
+                
+                if entry_points:
+                    # Try the first callable function
+                    results = getattr(module, entry_points[0])(**args)
+                else:
+                    raise ValueError("Could not find entry point in training script")
+            
+            # Handle different result formats
+            if results is None:
+                # Script might have saved results directly to disk
+                return self._load_results()
+            elif isinstance(results, dict):
+                # Save results if they're returned as a dict
+                tracker.save_results(results)
+                return results
+            else:
+                # Try to convert non-dict results
+                try:
+                    result_dict = {"result": results}
+                    tracker.save_results(result_dict)
+                    return result_dict
+                except:
+                    return {"status": "completed", "note": "Script returned non-serializable result"}
+                
+        finally:
+            # Ensure tracker is closed
+            tracker.close()
+    
+    def _load_results(self) -> Dict[str, Any]:
+        """Load results from the job directory"""
+        results_path = self.output_dir / "results.json"
+        if results_path.exists():
+            with open(results_path, "r") as f:
+                return json.load(f)
+        return {"status": self._status}
+    
+    def _save_metadata(self) -> None:
+        """Save job metadata to disk"""
+        metadata = {
+            "job_id": self._job_id,
+            "experiment_name": self._experiment_name,
+            "status": self._status,
+            "training_script": str(self._training_script),
+            "dataset_path": str(self._dataset_path)
+        }
+        
+        if self._start_time:
+            metadata["start_time"] = self._start_time
+        
+        if self._end_time:
+            metadata["end_time"] = self._end_time
+            metadata["duration"] = self._end_time - self._start_time
+        
+        metadata_path = self.output_dir / "metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+    
+    def get_status(self) -> str:
+        """Get current job status (not_started, running, completed, failed)"""
+        return self._status
+    
+    def get_metrics(self) -> Dict[str, List[float]]:
+        """Get metrics from the job"""
+        return self.load_metrics()
+    
+    def get_artifacts(self) -> Dict[str, str]:
+        """Get paths to artifacts produced by the job"""
+        artifacts = {}
+        
+        # Check for model file
+        model_path = self.output_dir / "models" / "model.pt"
+        if model_path.exists():
+            artifacts["model"] = str(model_path)
+        
+        # Get latest checkpoint
+        checkpoints = list(self.output_dir.glob("checkpoints/checkpoint_*.pt"))
+        if checkpoints:
+            latest = max(checkpoints, key=os.path.getctime)
+            artifacts["latest_checkpoint"] = str(latest)
+        
+        # Add other artifacts
+        results_path = self.output_dir / "results.json"
+        if results_path.exists():
+            artifacts["results"] = str(results_path)
+        
+        return artifacts
+    
+    def get_config(self) -> Config:
+        """Get job configuration"""
+        return self._config
+    
+    @property
+    def id(self) -> str:
+        """Get job ID"""
+        return self._job_id
+    
+    def launch_tensorboard(self, port: int = 6006) -> subprocess.Popen:
+        """
+        Launch TensorBoard for this specific job
+        
+        Args:
+            port: Port for TensorBoard server
+            
+        Returns:
+            Subprocess handle for the TensorBoard process
+        """
+        log_dir = self.output_dir / "logs"
+        cmd = [sys.executable, "-m", "tensorboard.main", "--logdir", str(log_dir), "--port", str(port)]
+        process = subprocess.Popen(cmd)
+        print(f"TensorBoard started at http://localhost:{port}")
+        return process
+    
+    def load_metrics(self) -> Dict[str, List]:
+        """
+        Load metrics that were logged during training
+        
+        Returns:
+            Dictionary of metrics with their values
+        """
+        metrics_path = self.output_dir / "metrics" / "metrics.json"
+        if metrics_path.exists():
+            with open(metrics_path, "r") as f:
+                return json.load(f)
+        return {}
+    
+    def stop(self) -> bool:
+        """
+        Stop a running job
+        
+        Returns:
+            True if job was stopped, False if it wasn't running
+        """
+        if self._status != "running" or self._process is None:
+            return False
+        
+        # Send termination signal
+        try:
+            self._process.terminate()
+            
+            # Give it some time to terminate gracefully
+            for _ in range(5):
+                if self._process.poll() is not None:
+                    break
+                time.sleep(1)
+            
+            # Force kill if still running
+            if self._process.poll() is None:
+                self._process.kill()
+            
+            # Update status
+            self._status = "stopped"
+            self._end_time = time.time()
+            self._save_metadata()
+            
+            return True
+        except:
+            return False
+
+## Job Execution Flow
+1. Create job directory in experiment folder
+2. Copy or reference training script
+3. Save configuration to job directory
+4. Set up environment variables
+5. Execute training script as subprocess or function call
+6. Monitor and collect outputs
+7. Save final artifacts and metrics
+
+## Job Directory Structure
+
+experiments/{experiment_name}/{job_id}/
+├── config.yaml           
+├── metrics/              # Logged metrics
+├── checkpoints/          # Model checkpoints
+├── artifacts/            # Other artifacts
+├── logs/                 # TensorBoard logs
+└── metadata.json         # Job metadata
+
+lets say the training job or eval job is finished and now i want to access the tensorboard or metrics that were logged for this job by the tracker: how do i do that?
+
+
+
+
+# Inside TrainingJob
+def run_with_pretrained_model(self, model_path, gpu_id=None):
+    # Load model from artifacts
+    model_state = self.artifact_manager.load_model(model_path)
+    
+    # Pass to training script
+    env = os.environ.copy()
+    env["PRETRAINED_MODEL_PATH"] = model_path
+    
+    # Continue with training
+    return self._run_as_subprocess(gpu_id, env)

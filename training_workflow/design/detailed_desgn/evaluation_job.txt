@@ -1,0 +1,103 @@
+# EVALUATION JOB
+
+## Purpose
+Execute model evaluation with proper configuration and environment setup.
+
+## Responsibilities
+1. Load models and test datasets
+2. Set up evaluation environment
+3. Execute evaluation script
+4. Save evaluation metrics and results
+5. Track evaluation job status
+
+## Responsibility Clarification
+The Evaluation Job is the ONLY component responsible for:
+- Setting up the evaluation environment
+- Loading models for evaluation
+- Executing the evaluation script
+- Tracking evaluation job status
+
+The Evaluation Job delegates ALL logging and metric tracking to the Evaluation Tracker,
+which in turn uses the Artifact Manager for persistent storage.
+
+## Interface
+
+from typing import Dict, List, Any, Optional
+import os
+import subprocess
+import json
+import time
+from pathlib import Path
+import importlib.util
+from experiment_module.config import Config
+from experiment_module.tracking import EvaluationTracker
+from experiment_module.artifacts import ArtifactManager
+
+class EvaluationJob:
+    def __init__(self, 
+                 job_id: str,
+                 experiment_name: str,
+                 evaluation_script: str,
+                 model_path: str,
+                 dataset_path: str,
+                 config: Config,
+                 output_dir: Optional[str] = None,
+                 artifact_manager: Optional[ArtifactManager] = None):
+        """
+        Initialize evaluation job
+        
+        Args:
+            job_id: Unique identifier for the job
+            experiment_name: Name of the experiment
+            evaluation_script: Path to evaluation script
+            model_path: Path to model to evaluate
+            dataset_path: Path to test dataset
+            config: Configuration for the job
+            output_dir: Directory for outputs
+            artifact_manager: Optional artifact manager instance
+        """
+        self._job_id = job_id
+        self._experiment_name = experiment_name
+        self._evaluation_script = Path(evaluation_script)
+        self._model_path = model_path
+        self._dataset_path = Path(dataset_path)
+        self._config = config
+        
+        # Initialize artifact manager
+        if artifact_manager is None:
+            self._artifact_manager = ArtifactManager()
+        else:
+            self._artifact_manager = artifact_manager
+        
+        # Set up output directory
+        if output_dir is None:
+            self.output_dir = Path(f"experiments/{experiment_name}/eval_{job_id}")
+        else:
+            self.output_dir = Path(output_dir)
+            
+        # Create output directory
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Save configuration
+        config_path = self.output_dir / "config.yaml"
+        self._config.save(str(config_path))
+        
+        # Initialize job metadata
+        self._status = "not_started"
+        self._start_time = None
+        self._end_time = None
+        self._process = None
+        self._save_metadata()
+    
+    def run(self, gpu_id: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Run the evaluation job
+        
+        Args:
+            gpu_id: GPU ID to use for evaluation
+            
+        Returns:
+            Dictionary with evaluation results
+        """
+        # Similar implementation to TrainingJob.run()
+        # ... 

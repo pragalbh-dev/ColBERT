@@ -1,0 +1,36 @@
+Artifacts manager:
+ - Will changing the implementation of this be enough to move storage to cloud eg: S3
+
+Training tracker:
+-  how are tensorboard compatible files for a particular metric for a partiular job saved?
+- Should we create a baseclass for tracking metrics????
+- Then training tracker could be a wrapper around this baseclass
+- Then we can also have evaluation trackers
+
+Training Job:
+- How is a training script attached to a training job?
+- Lets say I want to run another training job another script that uses certain different parameters. How to do that? I can do that by creating a new training job but how do i know the realtion between these 2 training jobs,,, need a quick solution to this
+- Same question for data and model artifacts
+- If the training scipt accepts a config file, can we use the config manager to manage the config file?
+
+Experiment manager:
+ - Can we somehow alot a specific amount of cpu or gpu to a training job?
+
+
+Can we also track evalutions of each checkpoint, and when i visialuze a training job then can i see the progression of metrics along with markers of checkpoints in each epoch.
+
+
+Basic usage
+with BaseTracker("my_experiment", "job_123") as tracker:
+# Log metrics
+tracker.log_metric("accuracy", 0.85, step=1)
+tracker.log_metrics({"loss": 0.1, "precision": 0.9}, step=1)
+# Log artifacts
+tracker.log_artifact("dataset", "path/to/dataset.csv")
+# Add visualizations
+tracker.add_text("description", "This is a test job")
+# Add hyperparameters
+tracker.add_hparams(
+{"learning_rate": 0.01, "batch_size": 32},
+{"accuracy": 0.85}
+)

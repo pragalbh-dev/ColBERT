@@ -1,0 +1,253 @@
+
+from experiment_module import ExperimentManager, ConfigManager
+Create or load configuration
+config = ConfigManager.create_default("image_classification")
+config.update({
+"learning_rate": 0.001,
+"batch_size": 32,
+"epochs": 10,
+"model_type": "resnet18"
+})
+Create experiment
+experiment = ExperimentManager.create("cifar10_classification")
+Create and run training job
+job = experiment.create_job(
+training_script="scripts/train_classifier.py",
+config=config,
+dataset_path="data/cifar10"
+)
+job.run()
+Later, run another job with different parameters
+config.update({"learning_rate": 0.01})
+job2 = experiment.create_job(
+training_script="scripts/train_classifier.py",
+config=config,
+dataset_path="data/cifar10"
+)
+job2.run()
+Compare results
+comparison = experiment.compare_jobs([job.id, job2.id])
+print(comparison)
+Launch TensorBoard to visualize results
+experiment.launch_tensorboard()
+
+import torch
+from experiment_module.tracking import TrainingTracker
+def train(model, dataloader, optimizer, epochs, tracker=None):
+for epoch in range(epochs):
+running_loss = 0.0
+correct = 0
+total = 0
+for i, (inputs, labels) in enumerate(dataloader):
+optimizer.zero_grad()
+outputs = model(inputs)
+loss = criterion(outputs, labels)
+loss.backward()
+optimizer.step()
+running_loss += loss.item()
+, predicted = outputs.max(1)
+total += labels.size(0)
+correct += predicted.eq(labels).sum().item()
+if tracker:
+if i % 100 == 99:
+tracker.log_metrics({
+'loss': running_loss / 100,
+'accuracy': 100 correct / total
+}, epoch len(dataloader) + i)
+running_loss = 0.0
+correct = 0
+total = 0
+# Save checkpoint
+if tracker:
+tracker.save_checkpoint(model, optimizer, epoch)
+Alternative using decorator
+@TrainingTracker.track(experiment_name="cifar10", job_id="job1")
+def train_with_decorator(model, dataloader, optimizer, epochs):
+# Training code here
+# tracker is automatically injected
+pass
+
+from experiment_module import ExperimentManager
+from experiment_module.config import ConfigManager
+
+# Create or load configuration
+config = ConfigManager.create_default("image_classification")
+config.update({
+    "learning_rate": 0.001,
+    "batch_size": 32,
+    "epochs": 10,
+    "model_type": "resnet18"
+})
+
+# Create experiment
+experiment = ExperimentManager.create("cifar10_classification")
+
+# Create and run training job
+job = experiment.create_job(
+    training_script="scripts/train_classifier.py",
+    config=config,
+    dataset_path="data/cifar10"
+)
+job.run()
+
+# Later, run another job with different parameters
+config.update({"learning_rate": 0.01})
+job2 = experiment.create_job(
+    training_script="scripts/train_classifier.py",
+    config=config,
+    dataset_path="data/cifar10"
+)
+job2.run()
+
+# Compare results
+comparison = experiment.compare_jobs([job.id, job2.id])
+print(comparison)
+
+# Launch TensorBoard to visualize results
+experiment.launch_tensorboard()
+
+
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms, models
+
+# This can be imported from experiment_module.utils
+def load_cifar10(batch_size=32):
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    
+    trainset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True)
+    
+    testset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False)
+    
+    return trainloader, testloader
+
+def main(config_path):
+    # Load configuration
+    from experiment_module.config import ConfigManager
+    config = ConfigManager.load(config_path)
+    
+    # Get tracker from environment
+    from experiment_module.tracking import TrainingTracker
+    experiment_name = os.environ.get("EXPERIMENT_NAME")
+    job_id = os.environ.get("JOB_ID")
+    tracker = TrainingTracker(experiment_name, job_id) if experiment_name and job_id else None
+    
+    # Load data
+    batch_size = config.get("batch_size", 32)
+    trainloader, testloader = load_cifar10(batch_size)
+    
+    # Create model
+    model_type = config.get("model_type", "resnet18")
+    if model_type == "resnet18":
+        model = models.resnet18(pretrained=config.get("pretrained", False))
+        model.fc = nn.Linear(model.fc.in_features, 10)
+    
+    # Training parameters
+    learning_rate = config.get("learning_rate", 0.001)
+    epochs = config.get("epochs", 10)
+    
+    # Create optimizer
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+    
+    # Train model
+    train(model, trainloader, optimizer, criterion, epochs, tracker)
+    
+    # Evaluate model
+    accuracy = evaluate(model, testloader)
+    print(f"Final accuracy: {accuracy:.2f}%")
+    
+    # Save model
+    if tracker:
+        tracker.save_model(model, "final_model.pt")
+    
+    return {"accuracy": accuracy}
+
+def train(model, dataloader, optimizer, criterion, epochs, tracker=None):
+    model.train()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    for epoch in range(epochs):
+        running_loss = 0.0
+        correct = 0
+        total = 0
+        
+        for i, (inputs, labels) in enumerate(dataloader):
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+            
+            if tracker and i % 100 == 99:
+                step = epoch * len(dataloader) + i
+                tracker.log_metrics({
+                    'loss': running_loss / 100,
+                    'accuracy': 100 * correct / total
+                }, step)
+                running_loss = 0.0
+                correct = 0
+                total = 0
+        
+        # Save checkpoint
+        if tracker:
+            tracker.save_checkpoint(model, optimizer, epoch)
+            
+        print(f"Epoch {epoch+1}/{epochs} completed")
+
+def evaluate(model, dataloader):
+    model.eval()
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    
+    correct = 0
+    total = 0
+    
+    with torch.no_grad():
+        for inputs, labels in dataloader:
+            inputs, labels = inputs.to(device), labels.to(device)
+            outputs = model(inputs)
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+    
+    return 100 * correct / total
+
+if __name__ == "__main__":
+    import sys
+    main(sys.argv[1] if len(sys.argv) > 1 else "config.yaml")
+
+
+
+from experiment_module.tracking import TrainingTracker
+
+@TrainingTracker.track(experiment_name="cifar10", job_id="job1")
+def train_with_decorator(model, dataloader, optimizer, criterion, epochs, tracker=None):
+    # Training code here - tracker is automatically injected
+    for epoch in range(epochs):
+        for i, (inputs, labels) in enumerate(dataloader):
+            # Training step
+            # ...
+            
+            # Log metrics
+            if tracker:
+                tracker.log_metrics({
+                    'loss': loss.item(),
+                    'accuracy': accuracy
+                }, step)

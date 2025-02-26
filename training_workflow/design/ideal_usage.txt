@@ -1,0 +1,11 @@
+First we will decide what all are our variables and choices that we need to make.
+We will then design a series of experiments that will help us making each decision.
+Each decision should bring us closer to the ideal configuration.
+Each experiment will test 1 variable.
+
+Before running experiments: 
+make sure you have a configuration driven training script
+
+
+Eg: train a colbert model :
+My current experiment includes: Trying out different base models

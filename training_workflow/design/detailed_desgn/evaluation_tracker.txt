@@ -1,0 +1,435 @@
+# EVALUATION TRACKER
+
+## Purpose
+Monitor and log evaluation metrics and results.
+
+## Responsibilities
+1. Track evaluation metrics
+2. Save evaluation results
+3. Create visualizations of evaluation results
+4. Maintain consistent directory structure for evaluation outputs
+
+## Responsibility Clarification
+The Evaluation Tracker is the ONLY component responsible for:
+- Creating and writing evaluation log files
+- Saving evaluation metrics to disk
+- Creating evaluation visualizations
+- Maintaining the evaluation output directory structure
+
+The Evaluation Job delegates ALL logging and tracking responsibilities to the Evaluation Tracker.
+
+## Interface
+
+from typing import Dict, Any, Optional, List, Union
+import os
+import time
+import json
+from pathlib import Path
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+from experiment_module.tracking import BaseTracker
+from experiment_module.artifacts import ArtifactManager
+
+class EvaluationTracker(BaseTracker):
+    def __init__(self, 
+                 experiment_name: str, 
+                 job_id: str, 
+                 log_dir: Optional[str] = None,
+                 artifact_manager: Optional[ArtifactManager] = None):
+        """
+        Initialize evaluation tracker
+        
+        Args:
+            experiment_name: Name of the experiment
+            job_id: ID of the evaluation job
+            log_dir: Directory for logs
+            artifact_manager: Optional artifact manager instance
+        """
+        # Initialize base tracker
+        super().__init__(experiment_name, job_id, log_dir, artifact_manager)
+        
+        # Create additional directories specific to evaluation
+        self.results_dir = self.log_dir / "results"
+        self.visualizations_dir = self.log_dir / "visualizations"
+        
+        os.makedirs(self.results_dir, exist_ok=True)
+        os.makedirs(self.visualizations_dir, exist_ok=True)
+        
+        # Evaluation-specific attributes
+        self.evaluation_complete = False
+        self.evaluation_time = None
+        
+        print(f"Evaluation tracker initialized for experiment '{experiment_name}', job '{job_id}'")
+        print(f"Logs will be saved to {self.log_dir}")
+    
+    def log_evaluation_results(self, results: Dict[str, Any]) -> None:
+        """
+        Log evaluation results
+        
+        Args:
+            results: Dictionary of evaluation results
+        """
+        # Store metrics using base class method
+        self.log_metrics(results)
+        
+        # Save detailed results
+        results_file = self.results_dir / "evaluation_results.json"
+        with open(results_file, "w") as f:
+            json.dump(results, f, indent=2)
+        
+        # Mark evaluation as complete
+        self.evaluation_complete = True
+        self.evaluation_time = time.time() - self.start_time
+        
+        # Add evaluation time to results
+        self.log_metric("evaluation_time_seconds", self.evaluation_time)
+        
+        # Create visualizations
+        self.create_visualizations(results)
+        
+        print(f"Evaluation completed in {self.evaluation_time:.2f} seconds")
+    
+    def create_visualizations(self, results: Dict[str, Any]) -> None:
+        """
+        Create visualizations of evaluation results
+        
+        Args:
+            results: Dictionary of evaluation results
+        """
+        # Create basic visualizations based on results
+        self._create_metrics_summary(results)
+        
+        # Create specific visualizations based on result types
+        if "confusion_matrix" in results:
+            self._create_confusion_matrix(results["confusion_matrix"])
+        
+        if "precision" in results and "recall" in results:
+            self._create_precision_recall_curve(results)
+        
+        if any(k.startswith("class_accuracy_") for k in results.keys()):
+            class_accuracies = {k.replace("class_accuracy_", ""): v 
+                               for k, v in results.items() 
+                               if k.startswith("class_accuracy_")}
+            self._create_class_accuracy_chart(class_accuracies)
+        
+        # Add all visualizations to TensorBoard
+        for viz_file in self.visualizations_dir.glob("*.png"):
+            img = plt.imread(str(viz_file))
+            self.add_image(f"evaluation/{viz_file.stem}", img)
+    
+    def _create_metrics_summary(self, results: Dict[str, Any]) -> None:
+        """Create summary of evaluation metrics"""
+        # Filter for numeric metrics only
+        numeric_metrics = {k: v for k, v in results.items() 
+                          if isinstance(v, (int, float)) and not k.startswith("_")}
+        
+        if not numeric_metrics:
+            return
+        
+        plt.figure(figsize=(10, 6))
+        
+        # Sort metrics by value
+        sorted_metrics = sorted(numeric_metrics.items(), key=lambda x: x[1], reverse=True)
+        names, values = zip(*sorted_metrics)
+        
+        # Create horizontal bar chart
+        y_pos = np.arange(len(names))
+        plt.barh(y_pos, values)
+        plt.yticks(y_pos, names)
+        plt.xlabel('Value')
+        plt.title('Evaluation Metrics Summary')
+        plt.tight_layout()
+        
+        # Save figure
+        fig_path = self.visualizations_dir / "metrics_summary.png"
+        plt.savefig(fig_path)
+        
+        # Add to TensorBoard
+        self.add_figure("evaluation/metrics_summary", plt.gcf())
+        
+        plt.close()
+    
+    def _create_confusion_matrix(self, confusion_matrix: List[List[int]]) -> None:
+        """Create confusion matrix visualization"""
+        plt.figure(figsize=(10, 8))
+        
+        # Create heatmap
+        sns.heatmap(confusion_matrix, annot=True, fmt="d", cmap="Blues")
+        plt.xlabel('Predicted')
+        plt.ylabel('Actual')
+        plt.title('Confusion Matrix')
+        
+        # Save figure
+        fig_path = self.visualizations_dir / "confusion_matrix.png"
+        plt.savefig(fig_path)
+        
+        # Add to TensorBoard
+        self.add_figure("evaluation/confusion_matrix", plt.gcf())
+        
+        plt.close()
+    
+    def _create_precision_recall_curve(self, results: Dict[str, Any]) -> None:
+        """Create precision-recall curve"""
+        plt.figure(figsize=(8, 8))
+        
+        # Get precision and recall values
+        precision = results.get("precision", 0)
+        recall = results.get("recall", 0)
+        f1 = results.get("f1", 0)
+        
+        # Create scatter plot
+        plt.scatter([recall], [precision], s=100, c='red', zorder=2)
+        
+        # Add text annotation
+        plt.annotate(f"F1: {f1:.3f}", 
+                    xy=(recall, precision), 
+                    xytext=(recall+0.05, precision+0.05),
+                    arrowprops=dict(arrowstyle="->", connectionstyle="arc3"))
+        
+        # Add precision-recall curve if available
+        if "precision_recall_curve" in results:
+            curve = results["precision_recall_curve"]
+            pr_precision = curve.get("precision", [])
+            pr_recall = curve.get("recall", [])
+            if pr_precision and pr_recall:
+                plt.plot(pr_recall, pr_precision, 'b-', zorder=1)
+        
+        # Set plot properties
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall')
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.xlim(-0.05, 1.05)
+        plt.ylim(-0.05, 1.05)
+        
+        # Save figure
+        fig_path = self.visualizations_dir / "precision_recall.png"
+        plt.savefig(fig_path)
+        
+        # Add to TensorBoard
+        self.add_figure("evaluation/precision_recall", plt.gcf())
+        
+        plt.close()
+    
+    def _create_class_accuracy_chart(self, class_accuracies: Dict[str, float]) -> None:
+        """Create class accuracy chart"""
+        plt.figure(figsize=(12, 6))
+        
+        # Sort by accuracy
+        sorted_items = sorted(class_accuracies.items(), key=lambda x: x[1], reverse=True)
+        classes, accuracies = zip(*sorted_items)
+        
+        # Create bar chart
+        plt.bar(classes, accuracies)
+        plt.xlabel('Class')
+        plt.ylabel('Accuracy')
+        plt.title('Accuracy by Class')
+        plt.xticks(rotation=45, ha="right")
+        plt.tight_layout()
+        
+        # Save figure
+        fig_path = self.visualizations_dir / "class_accuracies.png"
+        plt.savefig(fig_path)
+        
+        # Add to TensorBoard
+        self.add_figure("evaluation/class_accuracies", plt.gcf())
+        
+        plt.close()
+    
+    def compare_with_baseline(self, 
+                             baseline_results: Dict[str, Any],
+                             metrics_to_compare: Optional[List[str]] = None) -> Dict[str, Dict[str, float]]:
+        """
+        Compare evaluation results with a baseline
+        
+        Args:
+            baseline_results: Dictionary of baseline evaluation results
+            metrics_to_compare: Optional list of metrics to compare
+            
+        Returns:
+            Dictionary with comparison results (differences)
+        """
+        if not self.evaluation_complete:
+            print("Warning: Current evaluation not complete")
+        
+        # Determine which metrics to compare
+        if metrics_to_compare is None:
+            # Use intersection of keys that have numeric values
+            current_metrics = {k: v for k, v in self.metrics.items() 
+                              if isinstance(v[-1]["value"] if isinstance(v, list) else v, (int, float))}
+            baseline_metrics = {k: v for k, v in baseline_results.items() 
+                               if isinstance(v, (int, float))}
+            metrics_to_compare = set(current_metrics.keys()) & set(baseline_metrics.keys())
+        
+        # Calculate differences
+        differences = {}
+        for metric in metrics_to_compare:
+            if metric in self.metrics and metric in baseline_results:
+                # Get the most recent value for the current evaluation
+                current_value = self.metrics[metric][-1]["value"] if isinstance(self.metrics[metric], list) else self.metrics[metric]
+                baseline_value = baseline_results[metric]
+                
+                # Calculate absolute and relative differences
+                abs_diff = current_value - baseline_value
+                rel_diff = (abs_diff / baseline_value) * 100 if baseline_value != 0 else float('inf')
+                
+                differences[metric] = {
+                    "current": current_value,
+                    "baseline": baseline_value,
+                    "absolute_diff": abs_diff,
+                    "relative_diff_percent": rel_diff
+                }
+        
+        # Create comparison visualization
+        self._create_comparison_chart(differences)
+        
+        # Save comparison results
+        comparison_file = self.results_dir / "baseline_comparison.json"
+        with open(comparison_file, "w") as f:
+            json.dump(differences, f, indent=2)
+        
+        return differences
+    
+    def _create_comparison_chart(self, differences: Dict[str, Dict[str, float]]) -> None:
+        """Create comparison chart between current and baseline results"""
+        if not differences:
+            return
+        
+        plt.figure(figsize=(12, 6))
+        
+        # Prepare data
+        metrics = list(differences.keys())
+        current_values = [differences[m]["current"] for m in metrics]
+        baseline_values = [differences[m]["baseline"] for m in metrics]
+        
+        # Set up bar positions
+        x = range(len(metrics))
+        width = 0.35
+        
+        # Create grouped bar chart
+        plt.bar([i - width/2 for i in x], current_values, width, label='Current')
+        plt.bar([i + width/2 for i in x], baseline_values, width, label='Baseline')
+        
+        # Add labels and title
+        plt.xlabel('Metrics')
+        plt.ylabel('Values')
+        plt.title('Comparison with Baseline')
+        plt.xticks(x, metrics, rotation=45, ha="right")
+        plt.legend()
+        plt.tight_layout()
+        
+        # Save figure
+        fig_path = self.visualizations_dir / "baseline_comparison.png"
+        plt.savefig(fig_path)
+        
+        # Add to TensorBoard
+        self.add_figure("evaluation/baseline_comparison", plt.gcf())
+        
+        plt.close()
+        
+        # Create relative difference chart
+        plt.figure(figsize=(12, 6))
+        
+        # Get relative differences
+        rel_diffs = [differences[m]["relative_diff_percent"] for m in metrics]
+        
+        # Create bar chart with color coding (green for improvement, red for regression)
+        colors = ['green' if d > 0 else 'red' for d in rel_diffs]
+        plt.bar(metrics, rel_diffs, color=colors)
+        
+        # Add labels and title
+        plt.xlabel('Metrics')
+        plt.ylabel('Relative Difference (%)')
+        plt.title('Relative Improvement/Regression vs Baseline')
+        plt.xticks(rotation=45, ha="right")
+        plt.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+        plt.tight_layout()
+        
+        # Save figure
+        fig_path = self.visualizations_dir / "relative_difference.png"
+        plt.savefig(fig_path)
+        
+        # Add to TensorBoard
+        self.add_figure("evaluation/relative_difference", plt.gcf())
+        
+        plt.close()
+    
+    def save_results(self) -> str:
+        """
+        Save final results to disk
+        
+        Returns:
+            Path to saved results
+        """
+        results_path = self.log_dir / "results.json"
+        
+        # Prepare results dictionary
+        results = {}
+        for metric_name, metric_values in self.metrics.items():
+            if isinstance(metric_values, list):
+                # For list metrics, take the last value
+                results[metric_name] = metric_values[-1]["value"]
+            else:
+                results[metric_name] = metric_values
+        
+        # Add metadata
+        results["_metadata"] = {
+            "experiment_name": self.experiment_name,
+            "job_id": self.job_id,
+            "timestamp": time.time(),
+            "duration": time.time() - self.start_time
+        }
+        
+        # Save to disk
+        with open(results_path, "w") as f:
+            json.dump(results, f, indent=2)
+            
+        return str(results_path)
+    
+    def close(self) -> None:
+        """Close tracker and release resources"""
+        # Save final results
+        self.save_results()
+        
+        # Log total duration
+        duration = time.time() - self.start_time
+        with open(self.log_dir / "duration.txt", "w") as f:
+            f.write(f"Total duration: {duration:.2f} seconds")
+        
+        # Update job metadata
+        metadata = {
+            "experiment_name": self.experiment_name,
+            "job_id": self.job_id,
+            "status": "completed",
+            "start_time": self.start_time,
+            "end_time": time.time(),
+            "duration": duration,
+            "evaluation_complete": self.evaluation_complete
+        }
+        
+        with open(self.log_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+        
+        # Call parent close method
+        super().close()
+
+
+## Directory Structure
+experiments/{experiment_name}/eval_{job_id}/
+├── logs/                      # TensorBoard event files
+├── metrics/                   # JSON files with logged metrics
+│   └── metrics.json           # All metrics in JSON format
+├── results/                   # Evaluation results
+│   ├── evaluation_results.json # Detailed evaluation results
+│   └── baseline_comparison.json # Comparison with baseline (if performed)
+├── visualizations/            # Generated visualizations
+│   ├── metrics_summary.png    # Summary of all metrics
+│   ├── confusion_matrix.png   # Confusion matrix (if available)
+│   ├── precision_recall.png   # Precision-recall curve (if available)
+│   ├── class_accuracies.png   # Class accuracies (if available)
+│   ├── baseline_comparison.png # Comparison with baseline (if performed)
+│   └── relative_difference.png # Relative differences vs baseline
+├── results.json               # Final evaluation results
+├── metadata.json              # Job metadata (status, timing, etc.)
+└── duration.txt               # Evaluation duration 

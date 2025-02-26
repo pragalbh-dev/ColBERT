@@ -1,0 +1,249 @@
+# BASE TRACKER
+
+## Purpose
+Provide a common foundation for all tracking components with shared functionality for metric logging, visualization, and artifact management.
+
+## Responsibilities
+1. Track and log metrics
+2. Save metrics to disk in standardized formats
+3. Integrate with TensorBoard for visualization
+4. Maintain consistent directory structure
+5. Provide common utilities for all tracker types
+
+## Interface
+
+from typing import Dict, List, Any, Optional, Union
+import os
+import time
+import json
+from pathlib import Path
+import numpy as np
+from torch.utils.tensorboard import SummaryWriter
+from experiment_module.artifacts import ArtifactManager
+
+class BaseTracker:
+    def __init__(self, 
+                 experiment_name: str, 
+                 job_id: str, 
+                 log_dir: Optional[str] = None,
+                 artifact_manager: Optional[ArtifactManager] = None):
+        """
+        Initialize base tracker
+        
+        Args:
+            experiment_name: Name of the experiment
+            job_id: ID of the job
+            log_dir: Directory for logs (default: experiments/{experiment_name}/{job_id})
+            artifact_manager: Optional artifact manager instance
+        """
+        self.experiment_name = experiment_name
+        self.job_id = job_id
+        
+        # Set up directory structure
+        if log_dir is None:
+            self.log_dir = Path(f"experiments/{experiment_name}/{job_id}")
+        else:
+            self.log_dir = Path(log_dir)
+            
+        # Create log directory
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Create metrics directory
+        self.metrics_dir = self.log_dir / "metrics"
+        os.makedirs(self.metrics_dir, exist_ok=True)
+        
+        # Initialize TensorBoard writer
+        self.tensorboard_dir = self.log_dir / "logs"
+        os.makedirs(self.tensorboard_dir, exist_ok=True)
+        self.writer = SummaryWriter(log_dir=str(self.tensorboard_dir))
+        
+        # Initialize or use provided artifact manager
+        if artifact_manager is None:
+            self.artifact_manager = ArtifactManager()
+        else:
+            self.artifact_manager = artifact_manager
+        
+        # Store metrics in memory
+        self.metrics = {}
+        
+        # Start time for tracking duration
+        self.start_time = time.time()
+        
+        print(f"Tracker initialized for experiment '{experiment_name}', job '{job_id}'")
+    
+    def log_metric(self, 
+                  name: str, 
+                  value: Union[float, int, np.ndarray], 
+                  step: Optional[int] = None,
+                  commit: bool = True) -> None:
+        """
+        Log a metric value
+        
+        Args:
+            name: Metric name
+            value: Metric value
+            step: Optional step number (e.g., epoch, iteration)
+            commit: Whether to immediately write to disk
+        """
+        # Store in memory
+        if name not in self.metrics:
+            self.metrics[name] = []
+        
+        metric_entry = {
+            "value": float(value) if isinstance(value, (int, float)) else value.tolist(),
+            "step": step,
+            "timestamp": time.time()
+        }
+        
+        self.metrics[name].append(metric_entry)
+        
+        # Log to TensorBoard
+        if step is not None:
+            self.writer.add_scalar(name, value, step)
+        
+        # Save to disk if requested
+        if commit:
+            self._save_metrics_to_disk()
+    
+    def log_metrics(self, 
+                   metrics: Dict[str, Any], 
+                   step: Optional[int] = None,
+                   commit: bool = True) -> None:
+        """
+        Log multiple metrics at once
+        
+        Args:
+            metrics: Dictionary of metric names and values
+            step: Optional step number (e.g., epoch, iteration)
+            commit: Whether to immediately write to disk
+        """
+        for name, value in metrics.items():
+            self.log_metric(name, value, step, commit=False)
+        
+        if commit:
+            self._save_metrics_to_disk()
+    
+    def _save_metrics_to_disk(self) -> None:
+        """Save all metrics to disk"""
+        metrics_file = self.metrics_dir / "metrics.json"
+        with open(metrics_file, "w") as f:
+            json.dump(self.metrics, f, indent=2)
+    
+    def log_artifact(self, 
+                    artifact_type: str, 
+                    artifact_path: str, 
+                    name: Optional[str] = None,
+                    metadata: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Log an artifact
+        
+        Args:
+            artifact_type: Type of artifact (e.g., "model", "dataset")
+            artifact_path: Path to the artifact
+            name: Optional name for the artifact
+            metadata: Optional metadata for the artifact
+            
+        Returns:
+            Path to the stored artifact
+        """
+        if name is None:
+            name = os.path.basename(artifact_path)
+        
+        # Use artifact manager to store the artifact
+        return self.artifact_manager.save_artifact(
+            artifact_path=artifact_path,
+            artifact_type=artifact_type,
+            experiment_name=self.experiment_name,
+            job_id=self.job_id,
+            name=name,
+            metadata=metadata
+        )
+    
+    def add_text(self, 
+                tag: str, 
+                text_string: str, 
+                step: Optional[int] = None) -> None:
+        """
+        Add text to TensorBoard
+        
+        Args:
+            tag: Text tag
+            text_string: Text content
+            step: Optional step number
+        """
+        self.writer.add_text(tag, text_string, step)
+    
+    def add_figure(self, 
+                  tag: str, 
+                  figure, 
+                  step: Optional[int] = None) -> None:
+        """
+        Add figure to TensorBoard
+        
+        Args:
+            tag: Figure tag
+            figure: Matplotlib figure
+            step: Optional step number
+        """
+        self.writer.add_figure(tag, figure, step)
+    
+    def add_image(self, 
+                 tag: str, 
+                 img_tensor, 
+                 step: Optional[int] = None) -> None:
+        """
+        Add image to TensorBoard
+        
+        Args:
+            tag: Image tag
+            img_tensor: Image tensor
+            step: Optional step number
+        """
+        self.writer.add_image(tag, img_tensor, step)
+    
+    def add_histogram(self, 
+                     tag: str, 
+                     values, 
+                     step: Optional[int] = None) -> None:
+        """
+        Add histogram to TensorBoard
+        
+        Args:
+            tag: Histogram tag
+            values: Values to plot
+            step: Optional step number
+        """
+        self.writer.add_histogram(tag, values, step)
+    
+    def add_hparams(self, 
+                   hparam_dict: Dict[str, Any],
+                   metric_dict: Dict[str, float]) -> None:
+        """
+        Add hyperparameters to TensorBoard
+        
+        Args:
+            hparam_dict: Dictionary of hyperparameters
+            metric_dict: Dictionary of metric results
+        """
+        self.writer.add_hparams(hparam_dict, metric_dict)
+    
+    def flush(self) -> None:
+        """Flush all pending writes to disk"""
+        self.writer.flush()
+        self._save_metrics_to_disk()
+    
+    def close(self) -> None:
+        """Close the tracker and release resources"""
+        self.flush()
+        self.writer.close()
+        print(f"Tracker closed for experiment '{self.experiment_name}', job '{self.job_id}'")
+    
+    def __enter__(self) -> 'BaseTracker':
+        """Context manager entry"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit"""
+        self.close()
+
+## Usage Example

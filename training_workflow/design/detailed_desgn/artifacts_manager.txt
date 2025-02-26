@@ -1,0 +1,189 @@
+# ARTIFACT MANAGER
+
+## Purpose
+Manage storage and retrieval of experiment artifacts.
+
+## Responsibilities
+1. Save and load model checkpoints
+2. Track artifact versions
+3. Manage dataset references
+4. Provide consistent file paths for artifacts
+5. Handle artifact metadata
+
+## Responsibility Clarification
+The Artifact Manager is the ONLY component responsible for:
+- Providing the persistent storage interface for all artifacts
+- Managing artifact versioning and metadata
+- Ensuring consistent file paths and organization
+- Handling the long-term storage of models and checkpoints
+
+The Training Tracker uses the Artifact Manager for all persistent storage operations.
+While the Training Tracker may maintain local copies of artifacts for convenience,
+the Artifact Manager is the source of truth for artifact storage and retrieval.
+
+## Interface
+
+
+from typing import Dict, Any, Optional
+import os
+import json
+import shutil
+from pathlib import Path
+import torch
+
+class ArtifactManager:
+    def __init__(self, base_dir: str = "artifacts"):
+        """
+        Initialize artifact manager
+        
+        Args:
+            base_dir: Base directory for artifacts
+        """
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(exist_ok=True, parents=True)
+    
+    def save_model(self, 
+                  model: Any, 
+                  experiment: str, 
+                  job_id: str, 
+                  name: str = "model.pt") -> str:
+        """
+        Save model to artifact store
+        
+        Args:
+            model: Model to save
+            experiment: Experiment name
+            job_id: Job ID
+            name: Model filename
+            
+        Returns:
+            Path to saved model
+        """
+        path = self.get_artifact_path(experiment, job_id, "models", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save(model.state_dict(), path)
+        return path
+    
+    def load_model(self, path: str) -> Dict[str, Any ]:
+        """
+        Load model from artifact store
+        
+        Args:
+            path: Path to model file
+            
+        Returns:
+            Model state dict
+        """
+        return torch.load(path)
+    
+    def save_checkpoint(self, 
+                       checkpoint: Dict[str, Any], 
+                       experiment: str, 
+                       job_id: str, 
+                       epoch: int) -> str:
+        """
+        Save training checkpoint
+        
+        Args:
+            checkpoint: Checkpoint dict (model, optimizer, epoch, etc.)
+            experiment: Experiment name
+            job_id: Job ID
+            epoch: Training epoch
+            
+        Returns:
+            Path to saved checkpoint
+        """
+        name = f"checkpoint_epoch_{epoch}.pt"
+        path = self.get_artifact_path(experiment, job_id, "checkpoints", name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save(checkpoint, path)
+        return path
+    
+    def load_checkpoint(self, path: str) -> Dict[str, Any]:
+        """
+        Load checkpoint from artifact store
+        
+        Args:
+            path: Path to checkpoint file
+            
+        Returns:
+            Checkpoint dict
+        """
+        return torch.load(path)
+    
+    def get_dataset_path(self, 
+                        dataset_name: str, 
+                        version: str = "latest") -> str:
+        """
+        Get path to dataset
+        
+        Args:
+            dataset_name: Dataset name
+            version: Dataset version
+            
+        Returns:
+            Path to dataset
+        """
+        pass
+    
+    def register_dataset(self, 
+                        dataset_path: str, 
+                        dataset_name: str, 
+                        version: str) -> str:
+        """
+        Register dataset in artifact store
+        
+        Args:
+            dataset_path: Path to dataset
+            dataset_name: Dataset name
+            version: Dataset version
+            
+        Returns:
+            Path to registered dataset
+        """
+        pass
+    
+    def get_artifact_path(self, 
+                         experiment: str, 
+                         job_id: str, 
+                         artifact_type: str, 
+                         name: str) -> str:
+        """
+        Get path for artifact
+        
+        Args:
+            experiment: Experiment name
+            job_id: Job ID
+            artifact_type: Type of artifact (models, checkpoints, etc.)
+            name: Artifact name
+            
+        Returns:
+            Path to artifact
+        """
+        return str(self.base_dir / experiment / job_id / artifact_type / name)
+
+## Storage Structure
+- Base directory for all artifacts
+- Subdirectories for models, datasets, checkpoints
+- Consistent naming convention for all artifacts
+- Metadata files alongside artifacts
+
+
+
+artifacts/
+├── datasets/
+│   ├── {dataset_name}/
+│   │   ├── v1/
+│   │   ├── v2/
+│   │   └── ...
+│   └── ...
+└── experiments/
+    └── {experiment_name}/
+        └── {job_id}/
+            ├── models/
+            │   └── model.pt
+            ├── checkpoints/
+            │   ├── checkpoint_epoch_1.pt
+            │   └── ...
+            └── other/
+                └── ...

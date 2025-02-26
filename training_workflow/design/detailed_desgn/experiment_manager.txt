@@ -1,0 +1,269 @@
+# EXPERIMENT MANAGER
+
+## Purpose
+Organize related training jobs and provide comparison utilities.
+
+## Responsibilities
+1. Create and track experiments
+2. Create training jobs within experiments
+3. Compare results across training jobs
+4. Visualize metrics via TensorBoard
+5. Manage experiment artifacts and configurations
+6. Orchestrate multi-phase training workflows
+7. Manage test datasets and evaluations
+
+## Responsibility Clarification
+The Experiment Manager is the ONLY component responsible for:
+- Creating and organizing experiments
+- Managing collections of related training jobs
+- Providing comparison utilities across jobs
+- Serving as the main entry point for the experiment workflow
+
+The Experiment Manager delegates individual job execution to Training Job instances,
+configuration management to the Config Manager, and artifact management to the
+Artifact Manager.
+
+## Interface
+
+from typing import Dict, List, Any, Optional
+import os
+import json
+import subprocess
+import uuid
+from pathlib import Path
+import pandas as pd
+from experiment_module.config import Config, ConfigManager
+from experiment_module.jobs import TrainingJob
+from experiment_module.storage import ArtifactManager
+from experiment_module.evaluation import EvaluationJob
+
+class Experiment:
+    def __init__(self, name: str, description: Optional[str] = None):
+        """
+        Initialize experiment
+        
+        Args:
+            name: Experiment name
+            description: Optional experiment description
+        """
+        pass
+    
+    def create_job(self, 
+                  training_script: str,
+                  config: Config,
+                  dataset_path: str,
+                  job_id: Optional[str] = None) -> TrainingJob:
+        """
+        Create a new training job
+        
+        Args:
+            training_script: Path to training script
+            config: Job configuration
+            dataset_path: Path to dataset
+            job_id: Optional job ID (default: auto-generated)
+            
+        Returns:
+            TrainingJob instance
+        """
+        pass
+    
+    def get_job(self, job_id: str) -> TrainingJob:
+        """Get job by ID"""
+        pass
+    
+    def list_jobs(self) -> List[str]:
+        """List all jobs in the experiment"""
+        pass
+    
+    def compare_jobs(self, job_ids: List[str]) -> pd.DataFrame:
+        """
+        Compare metrics across multiple jobs
+        
+        Returns:
+            DataFrame with job comparison
+        """
+        pass
+    
+    def launch_tensorboard(self, port: int = 6006) -> subprocess.Popen:
+        """
+        Launch TensorBoard for this experiment
+        
+        Args:
+            port: Port for TensorBoard server
+            
+        Returns:
+            Subprocess handle for the TensorBoard process
+        """
+        pass
+    
+    @property
+    def name(self) -> str:
+        """Get experiment name"""
+        return self._name
+    
+    @property
+    def path(self) -> str:
+        """Get experiment directory path"""
+        return self._path
+
+class ExperimentManager:
+    @staticmethod
+    def create(name: str, description: Optional[str] = None) -> Experiment:
+        """Create a new experiment"""
+        pass
+    
+    @staticmethod
+    def load(name: str) -> Experiment:
+        """Load existing experiment"""
+        pass
+    
+    @staticmethod
+    def list_experiments() -> List[str]:
+        """List all experiments"""
+        pass
+    
+    @staticmethod
+    def delete_experiment(name: str, confirm: bool = True) -> bool:
+        """Delete experiment and all its data"""
+        pass
+    
+    def create_evaluation_job(self, 
+                             job_id: str,
+                             evaluation_script: str,
+                             model_path: str,
+                             dataset_path: str,
+                             config: Config) -> EvaluationJob:
+        """
+        Create an evaluation job
+        
+        Args:
+            job_id: Unique identifier for the job
+            evaluation_script: Path to evaluation script
+            model_path: Path to model to evaluate
+            dataset_path: Path to test dataset
+            config: Configuration for the job
+            
+        Returns:
+            EvaluationJob instance
+        """
+        # Create evaluation job
+        job = EvaluationJob(
+            job_id=job_id,
+            experiment_name=self.name,
+            evaluation_script=evaluation_script,
+            model_path=model_path,
+            dataset_path=dataset_path,
+            config=config,
+            artifact_manager=self.artifact_manager
+        )
+        
+        # Register job with experiment
+        self._evaluation_jobs[job_id] = job
+        
+        return job
+    
+    def register_dataset(self, 
+                        dataset_name: str, 
+                        dataset_path: str, 
+                        dataset_type: str = "test") -> str:
+        """
+        Register a dataset with the experiment
+        
+        Args:
+            dataset_name: Name of the dataset
+            dataset_path: Path to the dataset
+            dataset_type: Type of dataset (train, test, validation)
+            
+        Returns:
+            Path to the registered dataset
+        """
+        # Register dataset with artifact manager
+        return self.artifact_manager.register_dataset(
+            dataset_path=dataset_path,
+            dataset_name=f"{self.name}_{dataset_type}_{dataset_name}",
+            version="latest"
+        )
+    
+    def compare_models(self, model_configs: List[Dict[str, str]]) -> Dict[str, Any]:
+        """
+        Compare multiple models based on their evaluation results
+        
+        Args:
+            model_configs: List of dictionaries with model information
+                Each dict should have: name, job_id, eval_job_id
+                
+        Returns:
+            Comparison results
+        """
+        results = {}
+        
+        for config in model_configs:
+            name = config["name"]
+            training_job_id = config["job_id"]
+            eval_job_id = config["eval_job_id"]
+            
+            # Get training job
+            training_job = self.get_job(training_job_id)
+            
+            # Get evaluation job
+            eval_job = self.get_evaluation_job(eval_job_id)
+            
+            # Get evaluation results
+            eval_results = eval_job.get_results()
+            
+            # Add to comparison
+            results[name] = {
+                "training_config": training_job.get_config().to_dict(),
+                "evaluation_results": eval_results,
+                "model_path": training_job.get_artifacts().get("model")
+            }
+        
+        return results
+    
+    def generate_report(self, comparison_results: Dict[str, Any], output_path: str) -> str:
+        """
+        Generate a comparison report
+        
+        Args:
+            comparison_results: Results from compare_models
+            output_path: Path to save the report
+            
+        Returns:
+            Path to the generated report
+        """
+        # Generate HTML report
+        # ...
+
+## Experiment Structure
+- Each experiment has its own directory
+- Jobs are subdirectories within experiment directory
+- Standard locations for configs, metrics, and artifacts
+- Metadata stored in JSON files
+
+experiments/
+├── {experiment_name}/
+│   ├── metadata.json     # Experiment metadata
+│   ├── {job_id_1}/       # Job directory
+│   ├── {job_id_2}/       # Job directory
+│   └── ...
+└── ...
+
+{
+  "name": "experiment_name",
+  "description": "Experiment description",
+  "created_at": "2023-06-15T10:30:00",
+  "jobs": [
+    {
+      "id": "job_id_1",
+      "status": "completed",
+      "created_at": "2023-06-15T10:35:00"
+    },
+    {
+      "id": "job_id_2",
+      "status": "running",
+      "created_at": "2023-06-15T11:30:00"
+    }
+  ]
+}
+
+
