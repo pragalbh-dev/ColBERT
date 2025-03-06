@@ -41,7 +41,7 @@ class BaseTracker:
         self.tensorboard_dir = self.log_dir / "logs"
         os.makedirs(self.tensorboard_dir, exist_ok=True)
         self.writer = SummaryWriter(log_dir=str(self.tensorboard_dir))
-        
+        print(f"DEBUG: TensorBoard writer created at {self.tensorboard_dir}")
         # Initialize or use provided artifact manager
         self.artifact_manager = artifact_manager
         

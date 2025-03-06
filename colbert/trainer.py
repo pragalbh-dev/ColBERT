@@ -25,7 +25,7 @@ class Trainer:
         # TODO: After the API stabilizes, make this "self.config.assign()" to emphasize this distinction.
         self.configure(triples=self.triples, queries=self.queries, collection=self.collection)
         self.configure(checkpoint=checkpoint)
-
+        
         launcher = Launcher(train)
 
         self._best_checkpoint_path = launcher.launch(self.config, self.triples, self.queries, self.collection)
@@ -34,3 +34,28 @@ class Trainer:
     def best_checkpoint_path(self):
         return self._best_checkpoint_path
 
+
+# Create a custom trainer for single-GPU training that properly uses avoid_fork_if_possible
+class SingleGPUTrainer(Trainer):
+    def __init__(self, triples, queries, collection, config=None):
+        super().__init__(triples, queries, collection, config)
+        
+    def train(self, checkpoint='bert-base-uncased'):
+        """
+        Override train method to use launch_without_fork for single-GPU training.
+        This ensures that avoid_fork_if_possible=True is properly respected.
+        """
+        # Configure resources like the original train method
+        self.configure(triples=self.triples, queries=self.queries, collection=self.collection)
+        self.configure(checkpoint=checkpoint)
+        
+        # Create the launcher with the training function
+        launcher = Launcher(train)
+        
+        # Check if we should avoid forking
+        if hasattr(self.config, 'avoid_fork_if_possible') and self.config.avoid_fork_if_possible and self.config.nranks == 1:
+            # Use launch_without_fork for single-GPU training
+            self._best_checkpoint_path = launcher.launch_without_fork(self.config, self.triples, self.queries, self.collection)
+        else:
+            # Use standard launch for multi-GPU training
+            self._best_checkpoint_path = launcher.launch(self.config, self.triples, self.queries, self.collection)

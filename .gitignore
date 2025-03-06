@@ -30,3 +30,17 @@ checkpoints/
 *.pt
 *.bin
 venv/
+
+## Experimentations
+experimentations/sample/*
+experiments/*
+data/*
+
+## indivisual one time test folders
+test_aspect_dataset_splitter_output/*
+test_aspect_processor_debug_output/*
+test_aspect_processor_output/*
+test_aspect_splitter_output/*
+
+test_no_miner_output/*
+test_with_miner_output/*

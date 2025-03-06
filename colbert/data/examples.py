@@ -41,7 +41,8 @@ class Examples:
 
         if rank or nranks:
             assert rank in range(nranks), (rank, nranks)
-            return [self.data[idx] for idx in range(0, len(self.data), nranks)]  # if line_idx % nranks == rank
+            # return [self.data[idx] for idx in range(0, len(self.data), nranks)]  # if line_idx % nranks == rank
+            return [self.data[idx] for idx in range(rank, len(self.data), nranks)]
 
         return list(self.data)
 

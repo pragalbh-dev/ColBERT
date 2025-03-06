@@ -1,7 +1,8 @@
 import ujson
-
+import numpy as np
 from collections import defaultdict
-from colbert.utils.runs import Run
+
+from colbert.infra.run import Run
 
 
 class Metrics:
@@ -56,20 +57,20 @@ class Metrics:
         assert query_idx >= self.max_query_idx
         self.max_query_idx = query_idx
 
-        Run.log_metric("ranking/max_query_idx", query_idx, query_idx)
-        Run.log_metric("ranking/num_queries_added", self.num_queries_added, query_idx)
+        Run().log_metric("ranking/max_query_idx", query_idx, query_idx)
+        Run().log_metric("ranking/num_queries_added", self.num_queries_added, query_idx)
 
         for depth in sorted(self.mrr_sums):
             score = self.mrr_sums[depth] / (query_idx+1.0)
-            Run.log_metric("ranking/MRR." + str(depth), score, query_idx)
+            Run().log_metric("ranking/MRR." + str(depth), score, query_idx)
 
         for depth in sorted(self.success_sums):
             score = self.success_sums[depth] / (query_idx+1.0)
-            Run.log_metric("ranking/Success." + str(depth), score, query_idx)
+            Run().log_metric("ranking/Success." + str(depth), score, query_idx)
 
         for depth in sorted(self.recall_sums):
             score = self.recall_sums[depth] / (query_idx+1.0)
-            Run.log_metric("ranking/Recall." + str(depth), score, query_idx)
+            Run().log_metric("ranking/Recall." + str(depth), score, query_idx)
 
     def output_final_metrics(self, path, query_idx, num_queries):
         assert query_idx + 1 == num_queries
@@ -109,6 +110,5 @@ def evaluate_recall(qrels, queries, topK_pids):
     recall_at_k = sum(recall_at_k) / len(qrels)
     recall_at_k = round(recall_at_k, 3)
     print("Recall @ maximum depth =", recall_at_k)
-
 
 # TODO: If implicit qrels are used (for re-ranking), warn if a recall metric is requested + add an asterisk to output.

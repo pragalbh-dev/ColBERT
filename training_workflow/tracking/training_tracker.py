@@ -7,6 +7,7 @@ import functools
 import torch
 import matplotlib.pyplot as plt
 from .base_tracker import BaseTracker
+import shutil
 
 class TrainingTracker(BaseTracker):
     def __init__(self, 
@@ -219,18 +220,41 @@ class TrainingTracker(BaseTracker):
         
         Args:
             epoch: Epoch number of the checkpoint
-            metrics: Dictionary of evaluation metrics
+            metrics: Dictionary of metric names and values
         """
-        self.checkpoint_evaluations[epoch] = metrics
+        # Create checkpoint evaluation directory if it doesn't exist
+        os.makedirs(self.checkpoint_eval_dir, exist_ok=True)
         
-        # Save to disk
-        eval_file = self.checkpoint_eval_dir / f"eval_epoch_{epoch}.json"
-        with open(eval_file, "w") as f:
+        # Save evaluation metrics to disk
+        eval_path = self.checkpoint_eval_dir / f"eval_epoch_{epoch}.json"
+        with open(eval_path, "w") as f:
             json.dump(metrics, f, indent=2)
+        
+        # Store in memory
+        self.checkpoint_evaluations[epoch] = metrics
         
         # Log to TensorBoard with special tag
         for name, value in metrics.items():
             self.writer.add_scalar(f"checkpoint_eval/{name}", value, epoch)
+        
+        # Update best model if this checkpoint is better
+        if self.best_metric is not None and self.best_metric in metrics:
+            current_value = metrics[self.best_metric]
+            is_better = False
+            
+            if self.best_metric_higher_better:
+                is_better = (self.best_metric_value is None or current_value > self.best_metric_value)
+            else:
+                is_better = (self.best_metric_value is None or current_value < self.best_metric_value)
+            
+            if is_better:
+                self.best_metric_value = current_value
+                checkpoint_path = self.checkpoint_dir / f"checkpoint_epoch_{epoch}.pt"
+                if os.path.exists(checkpoint_path):
+                    best_model_path = self.model_dir / f"best_model_epoch_{epoch}.pt"
+                    shutil.copy(checkpoint_path, best_model_path)
+                    self.best_model_path = str(best_model_path)
+                    print(f"New best {self.best_metric}: {current_value} (epoch {epoch})")
     
     def evaluate_checkpoint(self, 
                           epoch: int, 
@@ -470,3 +494,44 @@ class TrainingTracker(BaseTracker):
                     return func(*args, **kwargs)
             return wrapper
         return decorator 
+
+    def plot_checkpoint_progression(self, metric_name: str) -> None:
+        """
+        Plot progression of a metric across checkpoints
+        
+        Args:
+            metric_name: Name of the metric to plot
+        """
+        if not self.checkpoint_evaluations:
+            print("No checkpoint evaluations available")
+            return
+        
+        # Extract epochs and metric values
+        epochs = []
+        values = []
+        
+        for epoch, metrics in sorted(self.checkpoint_evaluations.items()):
+            if metric_name in metrics:
+                epochs.append(epoch)
+                values.append(metrics[metric_name])
+        
+        if not epochs:
+            print(f"Metric '{metric_name}' not found in checkpoint evaluations")
+            return
+        
+        # Create plot
+        plt.figure(figsize=(10, 6))
+        plt.plot(epochs, values, 'o-', label=metric_name)
+        plt.xlabel('Epoch')
+        plt.ylabel(metric_name)
+        plt.title(f'Progression of {metric_name} across checkpoints')
+        plt.grid(True)
+        
+        # Save plot
+        plot_path = self.checkpoint_eval_dir / f"{metric_name}_progression.png"
+        plt.savefig(plot_path)
+        
+        # Add to TensorBoard
+        self.add_figure(f"checkpoint_progression/{metric_name}", plt.gcf())
+        
+        plt.close() 

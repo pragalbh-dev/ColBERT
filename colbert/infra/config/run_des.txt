@@ -1,0 +1,47 @@
+Run Class Explanation: Configuration Management in ColBERT
+The Run class is a core infrastructure component of ColBERT that manages configuration and execution context. Let me explain its key aspects:
+Singleton Pattern
+This class uses the Singleton design pattern, ensuring only one instance exists across the application:
+def __new__(cls):
+    """
+    Singleton Pattern. See https://python-patterns.guide/gang-of-four/singleton/
+    """
+    if cls._instance is None:
+        cls._instance = super().__new__(cls)
+        cls._instance.stack = []
+        # Initialize default configs...
+    return cls._instance
+
+
+
+This means Run() will always return the same instance, maintaining consistent state throughout the application.
+Configuration Stack
+The class maintains a stack of RunConfig objects:
+The current configuration is always the top of the stack: self.stack[-1]
+The stack allows for nested configuration contexts
+Attribute access is delegated to the current config via __getattr__
+Context Management
+One of the most powerful features is the context manager that allows temporary configuration changes:
+@contextmanager
+def context(self, runconfig: RunConfig, inherit_config=True):
+    if inherit_config:
+        runconfig = RunConfig.from_existing(self.config, runconfig)
+    self.__append(runconfig)
+    try:
+        yield
+    finally:
+        self.__pop()
+
+        
+This enables code like:
+restored
+Utility Methods
+The class provides several utility methods:
+File handling: open() method for managing file access within configured paths
+Logging: print() and print_main() for distributed-aware logging
+Usage in Distributed Settings
+The class appears designed for distributed training, with:
+Rank awareness (self.rank)
+print_main() that only prints from the main process (rank 0)
+Configuration for multiple processes (nranks)
+This design enables ColBERT code to maintain configuration state across different components and to temporarily override settings in specific code blocks without affecting the global state. The singleton pattern ensures consistent behavior throughout the application.

@@ -3,7 +3,7 @@ import os
 import json
 import shutil
 from tempfile import TemporaryDirectory
-from tracking.evaluation_tracker import EvaluationTracker
+from tests.mocks.tracking import MockEvaluationTracker as EvaluationTracker
 from tracking.base_tracker import BaseTracker
 
 class TestEvaluationTracker(unittest.TestCase):

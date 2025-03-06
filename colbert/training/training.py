@@ -18,7 +18,7 @@ from colbert.modeling.reranker.electra import ElectraReranker
 from colbert.utils.utils import print_message
 from colbert.training.utils import print_progress, manage_checkpoints
 
-
+import torch.distributed as dist
 
 def train(config: ColBERTConfig, triples, queries=None, collection=None):
     config.checkpoint = config.checkpoint or 'bert-base-uncased'
@@ -51,10 +51,12 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
 
     colbert = colbert.to(DEVICE)
     colbert.train()
-
-    colbert = torch.nn.parallel.DistributedDataParallel(colbert, device_ids=[config.rank],
-                                                        output_device=config.rank,
-                                                        find_unused_parameters=True)
+    is_distributed = config.nranks > 1 and dist.is_available() and dist.is_initialized()
+        
+    if is_distributed:
+        colbert = torch.nn.parallel.DistributedDataParallel(colbert, device_ids=[config.rank],
+                                                            output_device=config.rank,
+                                                            find_unused_parameters=True)
 
     optimizer = AdamW(filter(lambda p: p.requires_grad, colbert.parameters()), lr=config.lr, eps=1e-8)
     optimizer.zero_grad()
@@ -139,6 +141,10 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
 
         if config.rank < 1:
             print_message(batch_idx, train_loss)
+            # Add tracking of training loss
+            from colbert.infra.run import Run
+            Run().log_metric('train/loss', train_loss, step=batch_idx)
+            
             manage_checkpoints(config, colbert, optimizer, batch_idx+1, savepath=None)
 
     if config.rank < 1:
