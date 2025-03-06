@@ -93,7 +93,7 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
 
         this_batch_loss = 0.0
 
-        for batch in BatchSteps:
+        for batch in BatchSteps: ### mini batches 
             with amp.context():
                 try:
                     queries, passages, target_scores = batch
@@ -130,14 +130,14 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
             if config.rank < 1:
                 print_progress(scores)
 
-            amp.backward(loss)
+            amp.backward(loss) ### accumulating gradients from all mini batches
 
             this_batch_loss += loss.item()
 
         train_loss = this_batch_loss if train_loss is None else train_loss
         train_loss = train_loss_mu * train_loss + (1 - train_loss_mu) * this_batch_loss
 
-        amp.step(colbert, optimizer, scheduler)
+        amp.step(colbert, optimizer, scheduler) ### updating the model parameters
 
         if config.rank < 1:
             print_message(batch_idx, train_loss)

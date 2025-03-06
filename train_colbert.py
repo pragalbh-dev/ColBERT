@@ -12,7 +12,7 @@ from colbert.infra.config import ColBERTConfig, RunConfig
 from colbert.trainer import SingleGPUTrainer as Trainer
 from colbert.utils.tracker import ColBERTTracker
 
-def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||"):
+def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",multiplier=None):
     """Create a small synthetic dataset for testing"""
     aspects = ["price", "quality", "service", "location", "features"]
     base_queries = [
@@ -48,7 +48,7 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||"):
         if not positive_docs:
             new_doc_idx = len(documents)
             quality = random.choice(["excellent", "good", "average", "poor", "terrible"])
-            new_doc = f"Document {new_doc_idx}: The {aspect} is {quality}."
+            new_doc = ". ".join([f"Document {new_doc_idx}: The {aspect} is {quality}."]*100)
             documents.append(new_doc)
             positive_docs = [new_doc_idx]
         
@@ -62,13 +62,18 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||"):
         for _ in range(min(8, len(negative_docs))):
             doc_idx = random.choice(negative_docs)
             labeled_pairs.append((query, documents[doc_idx], 0))
-    
+    if multiplier:
+        labeled_pairs=labeled_pairs*multiplier
     print(f"Created {len(labeled_pairs)} labeled pairs for {len(set([q for q, _, _ in labeled_pairs]))} unique queries")
     print(f"Collection has {len(documents)} documents")
-    
     return labeled_pairs, documents
 
 def train():
+    nranks=1
+
+    avoid_fork_if_possible=False
+    if nranks<=1:
+        avoid_fork_if_possible=True
     # Set random seeds for reproducibility
     random.seed(42)
     np.random.seed(42)
@@ -86,7 +91,7 @@ def train():
     
     # 2. Create a sample dataset
     print("Creating sample dataset...")
-    labeled_pairs, documents = create_sample_dataset(num_queries=50, num_docs=200)
+    labeled_pairs, documents = create_sample_dataset(num_queries=200, num_docs=5000,multiplier=10)
     
     # 3. Split the dataset
     print("Splitting dataset...")
@@ -104,20 +109,20 @@ def train():
     # Split and process the dataset
     datasets = splitter.process_data(
         output_dir=data_dir,
-        max_triplets_per_query=20,  # Increased from 10
-        max_positives=5  # Increased from 2
+        max_triplets_per_query=100,  # Increased from 10
+        max_positives=10  # Increased from 2
     )
     
     # Setup run context configuration
     # For single-GPU training (nranks=1), we use avoid_fork_if_possible=True
     # to prevent distributed initialization issues
     run_config = RunConfig(
-        nranks=1,  # For single machine training
+        nranks=nranks,  # For single machine training
         amp=True,  # Mixed precision
         experiment=experiment_name,
         root=str(base_dir),
         name=run_name,
-        avoid_fork_if_possible=True  # Important for single-GPU training
+        avoid_fork_if_possible=avoid_fork_if_possible  # Important for single-GPU training
     )
     
     # Initialize the tracker first (outside the context)
@@ -128,7 +133,7 @@ def train():
         enable_tensorboard=True,
         rank=0
     )
-    
+    s=time.time()
     # Use the Run context for training
     with Run().context(run_config):
         # Set the tracker in the Run context
@@ -136,23 +141,25 @@ def train():
         
         # ColBERT configuration
         config = ColBERTConfig(
-            bsize=4,  # Small batch size for testing
-            accumsteps=2,
+            bsize=256*nranks,  # Small batch size for testing
+            accumsteps=1,
             lr=5e-6,
-            nway=2,  # Binary pairs for simplicity
-            query_maxlen=128,
-            doc_maxlen=512,
+            nway=2,  # Binary pairs for simplicity  
+            query_maxlen=128,  
+            doc_maxlen=512,   
             dim=128,
             similarity="cosine",
             use_ib_negatives=False,
-            maxsteps=60,  # Limit training steps
-            warmup=10
+            maxsteps=100,  # Limit training steps
+            warmup=10,
+            nranks=nranks
         )
         
         # Make sure to pass the RunConfig settings to the ColBERTConfig
-        config.rank = 0
-        config.nranks = 1
-        config.avoid_fork_if_possible = True
+        if nranks<=1:
+            config.rank = 0
+        # config.nranks = 1
+        # config.avoid_fork_if_possible = True
         
         # Log the configuration
         tracker.log_config(config.export())
@@ -173,7 +180,7 @@ def train():
     
     # Close the tracker after the context ends
     tracker.close()
-    print("Done!")
+    print(f"Done! in {time.time()-s}")
 
 if __name__ == "__main__":
     train() 

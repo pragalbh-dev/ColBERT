@@ -52,7 +52,7 @@ class LazyBatcher():
         self.fb_protection = fb_protection
 
         # Filter triples for this process
-        self.triples = self._filter_triples_for_rank(rank, nranks)
+        # self.triples = self._filter_triples_for_rank(rank, nranks)
         
         # If false negative protection is enabled, organize triples
         if self.fb_protection:
@@ -228,8 +228,8 @@ class LazyBatcher():
             batch_triples = self._ensure_batch_has_no_false_negatives(batch_triples)
             
         # Verify batch size - this should never fail now because we pad the triples at initialization
-        if len(batch_triples) < self.bsize:
-            import pdb; pdb.set_trace()
+        # if len(batch_triples) < self.bsize:
+            # import pdb; pdb.set_trace()
             
         return self._prepare_batch(batch_triples)
     
