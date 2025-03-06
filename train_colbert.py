@@ -133,11 +133,22 @@ def train():
         enable_tensorboard=True,
         rank=0
     )
+    
+    # Add debug print to verify tracker initialization
+    print(f"INIT DEBUG: Created tracker with log_dir={str(experiment_dir / 'logs')}")
+    print(f"INIT DEBUG: TensorBoard dir={tracker.tensorboard_dir}")
+    
     s=time.time()
     # Use the Run context for training
     with Run().context(run_config):
         # Set the tracker in the Run context
         Run().set_tracker(tracker)
+        
+        # Add debug print to verify tracker is set in Run()
+        if hasattr(Run(), 'tracker'):
+            print(f"INIT DEBUG: Verified tracker is set in Run()")
+        else:
+            print(f"INIT DEBUG: ERROR - tracker not set in Run()")
         
         # ColBERT configuration
         config = ColBERTConfig(

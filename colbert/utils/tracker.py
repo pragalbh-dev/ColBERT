@@ -7,10 +7,23 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Union
 from training_workflow.tracking.base_tracker import BaseTracker
 
+"""
+ColBERTTracker: Specialized tracker for training ColBERT models.
+
+NOTE: This tracker does NOT filter logging based on process rank.
+The caller is responsible for only invoking logging methods from 
+the appropriate process (typically rank 0). This design allows
+for more flexible control over when and where logging occurs.
+"""
+
 class ColBERTTracker(BaseTracker):
     """
     Specialized tracker for ColBERT models that extends BaseTracker
     with ColBERT-specific logging functionality.
+    
+    IMPORTANT: This tracker DOES NOT filter logging based on process rank.
+    The caller is responsible for only invoking logging methods from
+    the appropriate process (typically rank 0).
     """
     
     def __init__(
@@ -32,6 +45,11 @@ class ColBERTTracker(BaseTracker):
             enable_tensorboard: Whether to enable TensorBoard logging
             artifact_manager: Optional artifact manager instance
             rank: Process rank in distributed training (0 is main process)
+            
+        Note:
+            While rank is stored, this tracker does not filter logging
+            based on rank. The caller is responsible for only invoking
+            logging methods from the appropriate process.
         """
         super().__init__(
             experiment_name=experiment_name,
@@ -109,7 +127,10 @@ class ColBERTTracker(BaseTracker):
         commit: bool = True
     ) -> None:
         """
-        Log a metric value
+        Log a metric value. Does NOT filter based on rank.
+        
+        The caller is responsible for ensuring this is only called
+        from the appropriate process (typically rank 0).
         
         Args:
             name: Name of the metric
@@ -117,10 +138,8 @@ class ColBERTTracker(BaseTracker):
             step: Training step
             commit: Whether to commit the metric to disk
         """
-        print(f"DEBUG TRACKER: logging {name}={value} at step={step}")
-        if not self.is_main:
-            return
-        print(f"DEBUG TRACKER: logging {name}={value} at step={step} is main={self.is_main}")
+        # Remove the rank check to allow logging from any process
+        
         # Convert tensor to scalar if needed
         if isinstance(value, torch.Tensor):
             value = value.item() if value.numel() == 1 else value.detach().cpu().numpy()
