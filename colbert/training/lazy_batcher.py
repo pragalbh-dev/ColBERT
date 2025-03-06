@@ -230,7 +230,13 @@ class LazyBatcher():
         # Verify batch size - this should never fail now because we pad the triples at initialization
         # if len(batch_triples) < self.bsize:
             # import pdb; pdb.set_trace()
-            
+        if len(batch_triples) < self.bsize:
+            print(f"Warning: Got batch of size {len(batch_triples)}, expected {self.bsize}")
+            # Either pad this batch to full size:
+            padding_needed = self.bsize - len(batch_triples)
+            padding_triples = batch_triples[:padding_needed]  # Reuse existing triples
+            batch_triples.extend(padding_triples)
+            # Or raise a StopIteration if you don't want to process partial batches
         return self._prepare_batch(batch_triples)
     
     def _prepare_batch(self, batch_triples):
