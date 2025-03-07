@@ -9,11 +9,12 @@ from collections import defaultdict, Counter
 from typing import List, Dict, Tuple, Set, Optional
 import numpy as np
 import argparse
+import time
 
 class AspectDatasetGenerator:
     """
     Generates a synthetic dataset with aspects, queries, documents, and labeled pairs,
-    compatible with AspectTrainingDataProcessor.
+    compatible with TripletGenerator.
     """
     
     def __init__(
@@ -25,6 +26,7 @@ class AspectDatasetGenerator:
         aspect_delimiter: str = "||",
         output_dir: Optional[str] = None
     ):
+        start_time = time.time()
         self.seed = seed
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -60,13 +62,42 @@ class AspectDatasetGenerator:
             "rating for it"
         ]
         
+        # Timing information
+        self.timing = {
+            "init": 0,
+            "generate_queries": 0,
+            "generate_documents": 0,
+            "generate_labeled_pairs": 0,
+            "export_dataset": 0,
+            "total": 0
+        }
+        
         # Generate the dataset components
+        query_start = time.time()
         self.queries = self._generate_queries(num_queries_per_aspect)  # actual text, not IDs
+        self.timing["generate_queries"] = time.time() - query_start
+        
+        doc_start = time.time()
         self.documents = self._generate_documents(num_docs)  # actual text, not IDs
+        self.timing["generate_documents"] = time.time() - doc_start
+        
+        pairs_start = time.time()
         self.labeled_pairs = self._generate_labeled_pairs()  # (query_text, doc_text, label)
+        self.timing["generate_labeled_pairs"] = time.time() - pairs_start
         
         # Statistics
         self.stats = self._calculate_statistics()
+        
+        # Total initialization time
+        self.timing["init"] = time.time() - start_time
+        self.timing["total"] += self.timing["init"]
+        
+        # Debug output
+        print(f"⏱️ Dataset generator initialized in {self.timing['init']:.2f}s")
+        print(f"  - Generate queries: {self.timing['generate_queries']:.2f}s")
+        print(f"  - Generate documents: {self.timing['generate_documents']:.2f}s")
+        print(f"  - Generate labeled pairs: {self.timing['generate_labeled_pairs']:.2f}s")
+        print(f"📊 Generated {len(self.queries)} queries, {len(self.documents)} documents, {len(self.labeled_pairs)} labeled pairs")
     
     def _generate_queries(self, num_per_aspect: int) -> List[str]:
         """Generate queries for each aspect"""
@@ -118,7 +149,7 @@ class AspectDatasetGenerator:
         Generate labeled query-document pairs with controlled positive/negative distribution.
         
         Returns:
-            List of tuples (query_text, doc_text, label) - exactly what AspectTrainingDataProcessor needs
+            List of tuples (query_text, doc_text, label) - exactly what TripletGenerator needs
         """
         labeled_pairs = []
         
@@ -209,11 +240,12 @@ class AspectDatasetGenerator:
     
     def export_dataset(self):
         """
-        Export the dataset in a format compatible with AspectTrainingDataProcessor.
+        Export the dataset in a format compatible with TripletGenerator.
         
-        1. Raw data in format expected by AspectTrainingDataProcessor
+        1. Raw data in format expected by TripletGenerator
         2. TSV files for easier inspection
         """
+        export_start = time.time()
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Export queries (simple line-by-line format)
@@ -226,7 +258,7 @@ class AspectDatasetGenerator:
             for idx, doc in enumerate(self.documents):
                 f.write(f"{idx}\t{doc}\n")
         
-        # Export labeled pairs - format compatible with AspectTrainingDataProcessor
+        # Export labeled pairs - format compatible with TripletGenerator
         with open(self.output_dir / "labeled_pairs.tsv", "w") as f:
             f.write("query\tdocument\tlabel\n")
             for query, doc, label in self.labeled_pairs:
@@ -247,11 +279,18 @@ class AspectDatasetGenerator:
         with open(self.output_dir / "statistics.json", "w") as f:
             json.dump(self.stats, f, indent=2)
         
-        print(f"Dataset exported to {self.output_dir}")
+        export_time = time.time() - export_start
+        self.timing["export_dataset"] = export_time
+        self.timing["total"] += export_time
+        
+        print(f"⏱️ Dataset exported to {self.output_dir} in {export_time:.2f}s")
+        print(f"  - {len(self.queries)} queries")
+        print(f"  - {len(self.documents)} documents")
+        print(f"  - {len(self.labeled_pairs)} labeled pairs")
     
     def get_dataset_for_processor(self):
         """
-        Return data in format directly usable by AspectTrainingDataProcessor
+        Return data in format directly usable by TripletGenerator
         
         Returns:
             labeled_pairs: List of (query, document, label) tuples
@@ -263,85 +302,97 @@ class AspectDatasetGenerator:
         """Print statistics about the dataset"""
         print("\n=== Dataset Statistics ===\n")
         
-        print(f"Total Queries: {self.stats['total']['queries']}")
-        print(f"Total Documents: {self.stats['total']['documents']}")
-        print(f"Total Labeled Pairs: {self.stats['total']['labeled_pairs']}")
-        print(f"Overall Positive Ratio: {self.stats['total']['positive_ratio']:.2f}")
+        print(f"Total queries: {self.stats['total']['queries']}")
+        print(f"Total documents: {self.stats['total']['documents']}")
+        print(f"Total labeled pairs: {self.stats['total']['labeled_pairs']}")
+        print(f"Positive pairs: {self.stats['total']['positives']} ({self.stats['total']['positive_ratio']:.2%})")
+        print(f"Negative pairs: {self.stats['total']['negatives']} ({1-self.stats['total']['positive_ratio']:.2%})")
         
-        print("\n=== Aspect Distribution ===\n")
-        
+        print("\nAspect distribution:")
         for aspect, stats in self.stats["by_aspect"].items():
-            print(f"Aspect: {aspect}")
-            print(f"  Queries: {stats['queries']}")
-            print(f"  Positive Examples: {stats['positives']}")
-            print(f"  Negative Examples: {stats['negatives']}")
-            print(f"  Positive Ratio: {stats['positive_ratio']:.2f}")
-            print()
+            print(f"  {aspect}:")
+            print(f"    Queries: {stats['queries']}")
+            print(f"    Positive pairs: {stats['positives']}")
+            print(f"    Negative pairs: {stats['negatives']}")
+            print(f"    Positive ratio: {stats['positive_ratio']:.2%}")
+            
+        print("\nGeneration timing:")
+        print(f"  - Query generation: {self.timing['generate_queries']:.2f}s")
+        print(f"  - Document generation: {self.timing['generate_documents']:.2f}s")
+        print(f"  - Labeled pairs generation: {self.timing['generate_labeled_pairs']:.2f}s")
+        if self.timing['export_dataset'] > 0:
+            print(f"  - Export dataset: {self.timing['export_dataset']:.2f}s")
+        print(f"  - Total time: {self.timing['total']:.2f}s")
+        
+        print("\nQuality analysis:")
+        aspect_coverage = sum(1 for _, stats in self.stats["by_aspect"].items() if stats["positives"] > 0) / len(self.aspects)
+        print(f"  - Aspect coverage: {aspect_coverage:.2%} of aspects have positive examples")
+        
+        # Calculate query-to-document ratio
+        if len(self.documents) > 0:
+            query_doc_ratio = len(self.queries) / len(self.documents)
+            print(f"  - Query-to-document ratio: {query_doc_ratio:.2f}")
+        
+        # Calculate labeled pairs per query
+        if len(self.queries) > 0:
+            pairs_per_query = len(self.labeled_pairs) / len(self.queries)
+            print(f"  - Labeled pairs per query: {pairs_per_query:.2f}")
     
     def visualize_statistics(self, save_path=None):
-        """Create visualizations of the dataset statistics"""
-        # Set up the figure
+        """Create visualizations of dataset statistics"""
         plt.figure(figsize=(15, 10))
         
-        # 1. Aspect query distribution
+        # 1. Positive/Negative distribution
         plt.subplot(2, 2, 1)
-        aspect_queries = {aspect: stats["queries"] for aspect, stats in self.stats["by_aspect"].items()}
-        sns.barplot(x=list(aspect_queries.keys()), y=list(aspect_queries.values()))
-        plt.title("Queries per Aspect")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
+        labels = ['Positive', 'Negative']
+        sizes = [self.stats['total']['positives'], self.stats['total']['negatives']]
+        plt.pie(sizes, labels=labels, autopct='%1.1f%%', colors=['#5cb85c', '#d9534f'])
+        plt.title('Positive vs Negative Labeled Pairs')
         
-        # 2. Positive/Negative distribution per aspect
+        # 2. Aspect distribution
         plt.subplot(2, 2, 2)
-        aspects = []
-        positives = []
-        negatives = []
+        aspects = list(self.stats['by_aspect'].keys())
+        query_counts = [stats['queries'] for stats in self.stats['by_aspect'].values()]
+        plt.bar(aspects, query_counts)
+        plt.title('Queries per Aspect')
+        plt.xticks(rotation=45)
         
-        for aspect, stats in self.stats["by_aspect"].items():
-            aspects.append(aspect)
-            positives.append(stats["positives"])
-            negatives.append(stats["negatives"])
+        # 3. Positive examples per aspect
+        plt.subplot(2, 2, 3)
+        positive_counts = [stats['positives'] for stats in self.stats['by_aspect'].values()]
+        negative_counts = [stats['negatives'] for stats in self.stats['by_aspect'].values()]
         
+        x = range(len(aspects))
         width = 0.35
-        x = np.arange(len(aspects))
         
-        plt.bar(x - width/2, positives, width, label="Positives")
-        plt.bar(x + width/2, negatives, width, label="Negatives")
+        plt.bar([i - width/2 for i in x], positive_counts, width, label='Positive', color='#5cb85c')
+        plt.bar([i + width/2 for i in x], negative_counts, width, label='Negative', color='#d9534f')
+        
+        plt.title('Labeled Pairs per Aspect')
         plt.xticks(x, aspects, rotation=45)
-        plt.title("Positive/Negative Examples by Aspect")
         plt.legend()
         
-        # 3. Positive ratio by aspect
-        plt.subplot(2, 2, 3)
-        positive_ratios = {aspect: stats["positive_ratio"] for aspect, stats in self.stats["by_aspect"].items()}
-        sns.barplot(x=list(positive_ratios.keys()), y=list(positive_ratios.values()))
-        plt.title("Positive Ratio by Aspect")
-        plt.ylim(0, 1)
-        plt.xticks(rotation=45)
-        
-        # 4. Overall distribution pie chart
+        # 4. Positive ratio per aspect
         plt.subplot(2, 2, 4)
-        plt.pie(
-            [self.stats["total"]["positives"], self.stats["total"]["negatives"]], 
-            labels=["Positive", "Negative"],
-            autopct='%1.1f%%',
-            colors=["#5cb85c", "#d9534f"]
-        )
-        plt.title("Overall Positive/Negative Distribution")
+        positive_ratios = [stats['positive_ratio'] for stats in self.stats['by_aspect'].values()]
+        plt.bar(aspects, positive_ratios, color='#5bc0de')
+        plt.title('Positive Ratio per Aspect')
+        plt.xticks(rotation=45)
+        plt.ylim(0, 1)
+        plt.axhline(y=0.5, color='r', linestyle='-', alpha=0.3)
         
         plt.tight_layout()
         
-        # Save if requested
         if save_path:
             plt.savefig(save_path)
             print(f"Visualization saved to {save_path}")
-        
-        plt.show()
+        else:
+            plt.show()
 
 
 def load_dataset_for_processor(data_dir):
     """
-    Load dataset from disk in format suitable for AspectTrainingDataProcessor
+    Load dataset from disk in format suitable for TripletGenerator
     
     Args:
         data_dir: Directory containing dataset files
@@ -374,9 +425,9 @@ def main(output_dir="data/test"):
     # Create a synthetic dataset
     generator = AspectDatasetGenerator(
         seed=42,
-        num_aspects=5,
+        num_aspects=10,
         num_queries_per_aspect=20,
-        num_docs=500,
+        num_docs=5000,
         aspect_delimiter="||",
         output_dir=output_dir
     )
@@ -390,21 +441,21 @@ def main(output_dir="data/test"):
     # Visualize statistics
     generator.visualize_statistics(save_path=Path(output_dir) / "statistics.png")
     
-    # Example of how to use with AspectTrainingDataProcessor
-    print("\n=== Example Code for AspectTrainingDataProcessor ===\n")
-    print("from colbert.data.train_data_preprocessor import AspectTrainingDataProcessor")
+    # Example of how to use with TripletGenerator
+    print("\n=== Example Code for TripletGenerator ===\n")
+    print("from colbert.data.train_data_preprocessor import TripletGenerator")
     print("# Option 1: Load directly from generator")
     print("labeled_pairs, collection = generator.get_dataset_for_processor()")
     print("# Option 2: Load from files")
     print(f"labeled_pairs, collection = load_dataset_for_processor('{output_dir}')")
-    print("\n# Initialize processor")
-    print("processor = AspectTrainingDataProcessor(")
+    print("\n# Initialize generator")
+    print("generator = TripletGenerator(")
     print("    labeled_pairs=labeled_pairs,")
     print("    collection=collection,")
     print("    aspect_delimiter='||'")
     print(")")
-    print("# Process data")
-    print("training_triplets = processor.process_data(")
+    print("# Generate triplets")
+    print("triplets = generator.generate_triplets(")
     print("    max_triplets_per_query=20,")
     print("    export_path='processed_data'")
     print(")")

@@ -1,17 +1,18 @@
 import os
 import random
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict, Set, Tuple, Union, Optional, Literal
 import srsly
 
-class AspectTrainingDataProcessor:
+class TripletGenerator:
     """
-    Processes training data for ColBERT with queries in the format [ASPECT]<delimiter>[Query_Phrase].
+    Generates triplets (query, positive, negative) for training ColBERT models.
+    Works with queries in the format [ASPECT]<delimiter>[Query_Phrase].
     
-    FIXME: This implementation assumes exhaustive labeling - i.e., for every query-document pair,
-    a label exists in the input data. This needs to be generalized for datasets where this assumption
-    doesn't hold.
+    This class can be used to generate triplets for any dataset split (train/val/test)
+    with configurable negative sampling strategies.
     """
     
     def __init__(
@@ -46,14 +47,47 @@ class AspectTrainingDataProcessor:
             
         random.seed(seed)
         
+        # Timing information for initialization steps
+        start_time = time.time()
+        
         # Parse query aspects and build data structures
+        parse_start = time.time()
         self._parse_query_aspects()
+        parse_time = time.time() - parse_start
+        
+        maps_start = time.time()
         self._make_data_maps()
+        maps_time = time.time() - maps_start
+        
+        negatives_start = time.time()
         self._build_rule_based_negatives()
+        negatives_time = time.time() - negatives_start
         
         # Results
-        self.training_triplets = []
+        self.triplets = []
         self.sampling_origins = {}  # Map triplet -> sampling technique when in debug mode
+        
+        # Store timing information
+        self.timing = {
+            "init_total": time.time() - start_time,
+            "parse_aspects": parse_time,
+            "make_data_maps": maps_time,
+            "build_rule_based_negatives": negatives_time,
+            "generate_triplets": 0,
+            "export_triplets": 0,
+            "sampling": {
+                "rule_based": 0,
+                "random": 0,
+                "miner": 0,
+                "total": 0
+            }
+        }
+        
+        if self.debug:
+            print(f"⏱️ TripletGenerator initialization: {self.timing['init_total']:.2f}s")
+            print(f"  - Parse aspects: {parse_time:.2f}s")
+            print(f"  - Make data maps: {maps_time:.2f}s")
+            print(f"  - Build rule-based negatives: {negatives_time:.2f}s")
     
     def _parse_query_aspects(self):
         """Parse query aspects from labeled pairs."""
@@ -108,7 +142,7 @@ class AspectTrainingDataProcessor:
                 if base not in base_to_queries:
                     base_to_queries[base] = []
                 base_to_queries[base].append(query)
-        
+                
         # For each base query, find passages that are positive for one aspect but negative for others
         for base, queries in base_to_queries.items():
             if len(queries) <= 1:  # Skip if only one aspect
@@ -148,9 +182,9 @@ class AspectTrainingDataProcessor:
             total_negatives = sum(len(negs) for negs in rule_based_negatives.values())
             print(f"Found {total_negatives} rule-based hard negatives across {len(rule_based_negatives)} queries")
     
-    def process_data(self, max_triplets_per_query=20, max_positives=None, export_path=None):
+    def generate_triplets(self, max_triplets_per_query=20, max_positives=None, export_path=None):
         """
-        Process the data and generate triplets.
+        Generate triplets for the dataset.
         
         Args:
             max_triplets_per_query: Maximum number of triplets to generate per query
@@ -160,14 +194,24 @@ class AspectTrainingDataProcessor:
         Returns:
             List of triplets, plus debug info if debug=True
         """
-        training_triplets = []
+        start_time = time.time()
+        triplets = []
         # Track generated triplets to avoid duplicates
         generated_triplets_set = set()
         
         # Debug info
         sampling_origins = {} if self.debug else None
         
+        # Timing for per-query operations
+        query_times = []
+        positive_selection_time = 0
+        triplet_creation_time = 0
+        
         for query in self.query_map:
+            query_start = time.time()
+            
+            # Get and sample positives
+            pos_start = time.time()
             positives = list(self.query_positives[query])
             if not positives:
                 continue  # Skip queries with no positives
@@ -176,6 +220,7 @@ class AspectTrainingDataProcessor:
             if max_positives and len(positives) > max_positives:
                 # Randomly sample max_positives
                 positives = random.sample(positives, max_positives)
+            positive_selection_time += time.time() - pos_start
             
             # For each positive, we want pos_neg_ratio negatives
             triplets_per_positive = int(self.pos_neg_ratio)
@@ -190,6 +235,7 @@ class AspectTrainingDataProcessor:
                 )
                 
                 # Create triplets
+                triplet_start = time.time()
                 q_id = self.query_map[query]
                 p_id = self.passage_map[positive]
                 
@@ -199,31 +245,58 @@ class AspectTrainingDataProcessor:
                     triplet = (q_id, p_id, n_id)
                     if triplet not in generated_triplets_set:
                         triplet_as_list = [q_id, p_id, n_id]
-                        training_triplets.append(triplet_as_list)
+                        triplets.append(triplet_as_list)
                         generated_triplets_set.add(triplet)
                         
                         # Store origin if in debug mode
                         if self.debug:
                             # Use tuple as key (hashable and consistent)
                             sampling_origins[tuple(triplet_as_list)] = origins[i]
+                triplet_creation_time += time.time() - triplet_start
+            
+            query_times.append(time.time() - query_start)
         
-        self.training_triplets = training_triplets
+        self.triplets = triplets
         if self.debug:
             self.sampling_origins = sampling_origins
         
-        print(f"Generated {len(training_triplets)} unique training triplets")
-        
         # Export if path provided
+        export_time = 0
         if export_path:
-            self.export_training_data(export_path)
+            export_start = time.time()
+            self.export_triplets(export_path)
+            export_time = time.time() - export_start
+            self.timing["export_triplets"] = export_time
+        
+        # Update timing info
+        total_time = time.time() - start_time
+        self.timing["generate_triplets"] = total_time
+        self.timing["positive_selection"] = positive_selection_time
+        self.timing["triplet_creation"] = triplet_creation_time
+        
+        if self.debug:
+            avg_query_time = sum(query_times) / len(query_times) if query_times else 0
+            print(f"\n⏱️ Triplet generation completed in {total_time:.2f}s")
+            print(f"  - Generated {len(triplets)} unique triplets")
+            print(f"  - Average time per query: {avg_query_time*1000:.2f}ms")
+            print(f"  - Positive selection: {positive_selection_time:.2f}s")
+            print(f"  - Triplet creation: {triplet_creation_time:.2f}s")
+            print(f"  - Negative sampling: {self.timing['sampling']['total']:.2f}s")
+            print(f"    - Rule-based: {self.timing['sampling']['rule_based']:.2f}s")
+            print(f"    - Random: {self.timing['sampling']['random']:.2f}s")
+            print(f"    - Miner: {self.timing['sampling']['miner']:.2f}s")
+            if export_path:
+                print(f"  - Export: {export_time:.2f}s")
         
         # Return triplets and sampling origins if in debug mode
         if self.debug:
-            return self.training_triplets, self.sampling_origins
-        return self.training_triplets
+            return self.triplets, self.sampling_origins
+        return self.triplets
     
     def _sample_negatives(self, query, positive, count):
         """Sample negatives using multiple strategies based on weights."""
+        sampling_start = time.time()
+        
         # Track sampled negatives to ensure uniqueness
         sampled_negatives = []
         sampled_negatives_origins = []  # Track where each negative came from
@@ -243,6 +316,7 @@ class AspectTrainingDataProcessor:
         
         # Sample from each strategy
         if strategy_counts.get("rule_based", 0) > 0:
+            rule_start = time.time()
             rule_based = self._sample_rule_based_negatives(
                 query, strategy_counts["rule_based"], sampled_negatives_set
             )
@@ -251,8 +325,10 @@ class AspectTrainingDataProcessor:
                     sampled_negatives.append(neg)
                     sampled_negatives_set.add(neg)
                     sampled_negatives_origins.append("rule_based")
+            self.timing["sampling"]["rule_based"] += time.time() - rule_start
         
         if strategy_counts.get("random", 0) > 0:
+            random_start = time.time()
             random_negs = self._sample_random_negatives(
                 query, positive, strategy_counts["random"], sampled_negatives_set
             )
@@ -261,8 +337,10 @@ class AspectTrainingDataProcessor:
                     sampled_negatives.append(neg)
                     sampled_negatives_set.add(neg)
                     sampled_negatives_origins.append("random")
+            self.timing["sampling"]["random"] += time.time() - random_start
         
         if strategy_counts.get("miner", 0) > 0 and self.negative_miner:
+            miner_start = time.time()
             miner_negs = self._sample_miner_negatives(
                 query, positive, strategy_counts["miner"], sampled_negatives_set
             )
@@ -271,9 +349,11 @@ class AspectTrainingDataProcessor:
                     sampled_negatives.append(neg)
                     sampled_negatives_set.add(neg)
                     sampled_negatives_origins.append("miner")
+            self.timing["sampling"]["miner"] += time.time() - miner_start
         
         # Ensure we have enough negatives (fall back to random if needed)
         if len(sampled_negatives) < count:
+            fallback_start = time.time()
             additional = self._sample_random_negatives(
                 query, positive, count - len(sampled_negatives), sampled_negatives_set
             )
@@ -282,6 +362,10 @@ class AspectTrainingDataProcessor:
                     sampled_negatives.append(neg)
                     sampled_negatives_set.add(neg)
                     sampled_negatives_origins.append("random_fallback")
+            self.timing["sampling"]["random"] += time.time() - fallback_start
+        
+        # Update total sampling time
+        self.timing["sampling"]["total"] += time.time() - sampling_start
         
         return sampled_negatives, sampled_negatives_origins if self.debug else sampled_negatives
     
@@ -348,8 +432,9 @@ class AspectTrainingDataProcessor:
         
         return random.sample(candidates, min(count, len(candidates))) if candidates else []
     
-    def export_training_data(self, path: Union[str, Path]):
-        """Export training data in ColBERT format."""
+    def export_triplets(self, path: Union[str, Path]):
+        """Export triplets in ColBERT format."""
+        start_time = time.time()
         path = Path(path)
         os.makedirs(path, exist_ok=True)
         
@@ -366,17 +451,23 @@ class AspectTrainingDataProcessor:
                 f.write(f"{idx}\t{document}\n")
         
         # Export triplets
-        random.shuffle(self.training_triplets)
-        srsly.write_jsonl(path / "triples.train.colbert.jsonl", self.training_triplets)
+        random.shuffle(self.triplets)
+        srsly.write_jsonl(path / "triples.train.colbert.jsonl", self.triplets)
         
-        print(f"Exported training data to {path}")
+        # Update timing
+        self.timing["export_triplets"] = time.time() - start_time
+        
+        if self.debug:
+            print(f"Exported data to {path} in {self.timing['export_triplets']:.2f}s")
         return path
 
-class AspectDatasetSplitter:
+
+class TripletDatasetSplitter:
     """
-    Splits a dataset into training, validation, and test sets for ColBERT aspect-based retrieval.
-    Ensures test documents are completely isolated from training/validation documents.
-    Creates specialized test sets for evaluating different negative sampling strategies.
+    Splits datasets into train/val/test sets and generates triplets for each split.
+    
+    The class implements a flexible splitting strategy that preserves aspect coverage
+    while sampling documents according to the specified ratio for each (query, label) group.
     """
     
     def __init__(
@@ -404,13 +495,26 @@ class AspectDatasetSplitter:
         
         random.seed(seed)
         
+        # Timing information
+        start_time = time.time()
+        
         # Set up data structures
         self.query_to_aspect = {}
         self.query_to_base = {}
+        self.aspect_to_queries = defaultdict(list)
         self.base_to_queries = defaultdict(list)
-        self._parse_query_aspects()
         
-        # Document assignments (test documents must not appear in train/val)
+        # Process queries to extract aspects
+        process_start = time.time()
+        self._process_queries()
+        process_time = time.time() - process_start
+        
+        # Group data by query-label for better splitting
+        group_start = time.time()
+        self.query_label_groups = self._group_by_query_label()
+        group_time = time.time() - group_start
+        
+        # Document assignments
         self.train_documents = set()
         self.val_documents = set()
         self.test_documents = set()
@@ -419,139 +523,170 @@ class AspectDatasetSplitter:
         self.train_pairs = []
         self.val_pairs = []
         self.test_pairs = []
-        self.rule_based_test_pairs = []
         
-    def _parse_query_aspects(self):
-        """Parse aspects and query phrases from queries."""
-        for query, _, _ in self.labeled_pairs:
-            parts = query.split(self.aspect_delimiter, 1)
-            if len(parts) == 2:
-                aspect, base = parts[0], parts[1]
+        # Store timing information
+        self.timing = {
+            "init_total": time.time() - start_time,
+            "process_queries": process_time,
+            "group_by_query_label": group_time,
+            "split_dataset": 0,
+            "process_data": 0,
+            "triplet_generation": {
+                "train": 0,
+                "val": 0,
+                "test": 0,
+                "test_rule_based": 0,
+                "test_miner": 0
+            }
+        }
+        
+        if self.debug:
+            print(f"⏱️ TripletDatasetSplitter initialization: {self.timing['init_total']:.2f}s")
+            print(f"  - Process queries: {process_time:.2f}s")
+            print(f"  - Group by query-label: {group_time:.2f}s")
+    
+    def _process_queries(self):
+        """Process queries to extract aspects and base queries."""
+        # Extract unique queries
+        unique_queries = set(q for q, _, _ in self.labeled_pairs)
+        
+        # Process each unique query
+        for query in unique_queries:
+            if self.aspect_delimiter in query:
+                aspect, base = query.split(self.aspect_delimiter, 1)
                 self.query_to_aspect[query] = aspect
                 self.query_to_base[query] = base
+                self.aspect_to_queries[aspect].append(query)
                 self.base_to_queries[base].append(query)
         
-        print(f"Processed {len(self.query_to_aspect)} queries with {len(self.base_to_queries)} unique base queries")
+        if self.debug:
+            print(f"Processed {len(unique_queries)} queries with {len(self.base_to_queries)} unique base queries")
+    
+    def _group_by_query_label(self):
+        """Group labeled pairs by query and label."""
+        groups = defaultdict(list)
+        
+        for query, doc, label in self.labeled_pairs:
+            # Use (query, label) as the group key
+            key = (query, label)
+            groups[key].append((query, doc, label))
+        
+        return groups
     
     def split_dataset(self):
         """
-        Split the dataset into train, validation, and test sets.
-        Ensures test documents don't appear in train/validation sets.
+        Split the dataset using the improved strategy.
+        For each (query, label) group, sample documents according to the split ratio.
         """
-        # Get all unique documents and queries
-        all_documents = set(p for _, p, _ in self.labeled_pairs)
-        all_queries = set(q for q, _, _ in self.labeled_pairs)
+        start_time = time.time()
         
-        # First, split documents to ensure isolation
-        doc_list = list(all_documents)
-        random.shuffle(doc_list)
+        # Reset splits
+        self.train_pairs = []
+        self.val_pairs = []
+        self.test_pairs = []
         
+        # Reset document sets
+        self.train_documents = set()
+        self.val_documents = set()
+        self.test_documents = set()
+        
+        # Get split ratios
         train_ratio, val_ratio, test_ratio = self.train_val_test_ratio
-        train_size = int(len(doc_list) * train_ratio)
-        val_size = int(len(doc_list) * val_ratio)
         
-        self.train_documents = set(doc_list[:train_size])
-        self.val_documents = set(doc_list[train_size:train_size+val_size])
-        self.test_documents = set(doc_list[train_size+val_size:])
+        # Track processing time by group type
+        positive_groups_time = 0
+        negative_groups_time = 0
+        group_counts = {"positive": 0, "negative": 0}
         
-        print(f"Document split: Train={len(self.train_documents)}, Val={len(self.val_documents)}, Test={len(self.test_documents)}")
-        
-        # Now split labeled pairs based on document assignment
-        train_pairs = []
-        val_pairs = []
-        test_pairs = []
-        
-        # Group by query to ensure we have aspect coverage in all splits
-        query_to_pairs = defaultdict(list)
-        for pair in self.labeled_pairs:
-            query, doc, label = pair
-            query_to_pairs[query].append(pair)
-        
-        # Process each query's pairs
-        for query, pairs in query_to_pairs.items():
-            train_query_pairs = []
-            val_query_pairs = []
-            test_query_pairs = []
+        # Process each (query, label) group
+        for (query, label), pairs in self.query_label_groups.items():
+            group_start = time.time()
             
-            for pair in pairs:
-                _, doc, _ = pair
-                if doc in self.test_documents:
-                    test_query_pairs.append(pair)
-                elif doc in self.val_documents:
-                    val_query_pairs.append(pair)
-                else:
-                    train_query_pairs.append(pair)
+            # Calculate sizes based on ratios
+            group_size = len(pairs)
+            train_size = int(group_size * train_ratio)
+            val_size = int(group_size * val_ratio)
             
-            train_pairs.extend(train_query_pairs)
-            val_pairs.extend(val_query_pairs)
-            test_pairs.extend(test_query_pairs)
-        
-        self.train_pairs = train_pairs
-        self.val_pairs = val_pairs
-        self.test_pairs = test_pairs
-        
-        print(f"Pair split: Train={len(self.train_pairs)}, Val={len(self.val_pairs)}, Test={len(self.test_pairs)}")
-        
-        # Create specialized test sets
-        self._create_specialized_test_sets()
-        
-        return self.train_pairs, self.val_pairs, self.test_pairs, self.rule_based_test_pairs
-    
-    def _create_specialized_test_sets(self):
-        """Create specialized test sets for evaluating different negative sampling strategies."""
-        # Find rule-based hard negatives for testing
-        test_query_positives = defaultdict(set)
-        
-        # Identify positive documents for each query in test set
-        for query, doc, label in self.test_pairs:
+            # Randomly shuffle pairs in the group
+            random.shuffle(pairs)
+            
+            # Split the group
+            train_group = pairs[:train_size]
+            val_group = pairs[train_size:train_size + val_size]
+            test_group = pairs[train_size + val_size:]
+            
+            # Add to respective splits
+            self.train_pairs.extend(train_group)
+            self.val_pairs.extend(val_group)
+            self.test_pairs.extend(test_group)
+            
+            # Update document sets
+            for _, doc, _ in train_group:
+                self.train_documents.add(doc)
+            for _, doc, _ in val_group:
+                self.val_documents.add(doc)
+            for _, doc, _ in test_group:
+                self.test_documents.add(doc)
+            
+            # Track time by group type (positive/negative)
+            group_time = time.time() - group_start
             if label == 1:
-                test_query_positives[query].add(doc)
+                positive_groups_time += group_time
+                group_counts["positive"] += 1
+            else:
+                negative_groups_time += group_time
+                group_counts["negative"] += 1
         
-        # Find rule-based hard negatives for each test query
-        rule_based_test_pairs = []
+        # Update timing information
+        split_time = time.time() - start_time
+        self.timing["split_dataset"] = split_time
+        self.timing["positive_groups"] = positive_groups_time
+        self.timing["negative_groups"] = negative_groups_time
         
-        for base_query, queries in self.base_to_queries.items():
-            if len(queries) <= 1:
-                continue  # Skip if only one aspect
-                
-            # For each pair of different aspects with the same base query
-            for query1 in queries:
-                positives1 = test_query_positives.get(query1, set())
-                if not positives1:
-                    continue
-                    
-                for query2 in queries:
-                    if query1 == query2:
-                        continue
-                        
-                    # Documents positive for query1 could be hard negatives for query2
-                    for doc in positives1:
-                        if doc in self.test_documents:
-                            # Add as negative example for query2
-                            rule_based_test_pairs.append((query2, doc, 0))
+        if self.debug:
+            print(f"⏱️ Dataset splitting completed in {split_time:.2f}s")
+            print(f"  - Positive groups ({group_counts['positive']}): {positive_groups_time:.2f}s")
+            print(f"  - Negative groups ({group_counts['negative']}): {negative_groups_time:.2f}s")
+            print(f"  - Train: {len(self.train_pairs)} pairs, {len(self.train_documents)} documents")
+            print(f"  - Val: {len(self.val_pairs)} pairs, {len(self.val_documents)} documents")
+            print(f"  - Test: {len(self.test_pairs)} pairs, {len(self.test_documents)} documents")
         
-        self.rule_based_test_pairs = rule_based_test_pairs
-        print(f"Created specialized rule-based test set with {len(rule_based_test_pairs)} pairs")
+        return self.train_pairs, self.val_pairs, self.test_pairs
     
     def process_data(self, output_dir, max_triplets_per_query=20, max_positives=None,
-                     train_negative_sampling_weights={"rule_based": 0.4, "random": 0.4, "miner": 0},
-                     val_negative_sampling_weights={"rule_based": 0.33, "random": 0.34, "miner": 0},
-                     test_negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0}):
+                     train_negative_sampling_weights={"rule_based": 0.4, "random": 0.4, "miner": 0.2},
+                     val_negative_sampling_weights={"rule_based": 0.33, "random": 0.34, "miner": 0.33},
+                     test_negative_sampling_weights={"rule_based": 0.5, "random": 0.5, "miner": 0.0},
+                     include_specialized_test_sets=True):
         """
-        Process the split data and generate train/val/test sets with independent IDs.
-        Each split will have its own independent ID space for queries and documents.
+        Process the data into triplets for each split.
         
         Args:
             output_dir: Directory to export the processed data
             max_triplets_per_query: Maximum triplets per query
             max_positives: Maximum positives per query
-        """ 
-        self.split_dataset()
+            *_negative_sampling_weights: Weights for each negative sampling strategy
+            include_specialized_test_sets: Whether to generate specialized test sets
+        
+        Returns:
+            Dictionary with triplets for each split
+        """
+        start_time = time.time()
+        
+        # Split the dataset first if not already split
+        if not self.train_pairs and not self.val_pairs and not self.test_pairs:
+            self.split_dataset()
+        
+        # Create output directory
         output_dir = Path(output_dir)
         os.makedirs(output_dir, exist_ok=True)
         
-        # Process training data with its own document set
-        train_processor = AspectTrainingDataProcessor(
+        results = {}
+        triplet_gen_times = {}
+        
+        # Process training data
+        train_start = time.time()
+        train_generator = TripletGenerator(
             labeled_pairs=self.train_pairs,
             collection=[doc for doc in self.collection if doc in self.train_documents],
             negative_miner=self.negative_miner,
@@ -561,14 +696,18 @@ class AspectDatasetSplitter:
             seed=self.seed,
             debug=self.debug
         )
-        train_triplets = train_processor.process_data(
+        results["train"] = train_generator.generate_triplets(
             max_triplets_per_query=max_triplets_per_query,
             max_positives=max_positives,
             export_path=output_dir / "train"
         )
+        train_time = time.time() - train_start
+        triplet_gen_times["train"] = train_time
+        self.timing["triplet_generation"]["train"] = train_time
         
-        # Process validation data with its own document set
-        val_processor = AspectTrainingDataProcessor(
+        # Process validation data
+        val_start = time.time()
+        val_generator = TripletGenerator(
             labeled_pairs=self.val_pairs,
             collection=[doc for doc in self.collection if doc in self.val_documents],
             negative_miner=self.negative_miner,
@@ -578,14 +717,18 @@ class AspectDatasetSplitter:
             seed=self.seed,
             debug=self.debug
         )
-        val_triplets = val_processor.process_data(
+        results["val"] = val_generator.generate_triplets(
             max_triplets_per_query=max_triplets_per_query,
             max_positives=max_positives,
             export_path=output_dir / "val"
         )
+        val_time = time.time() - val_start
+        triplet_gen_times["val"] = val_time
+        self.timing["triplet_generation"]["val"] = val_time
         
-        # Process standard test data with its own document set
-        test_processor = AspectTrainingDataProcessor(
+        # Process test data
+        test_start = time.time()
+        test_generator = TripletGenerator(
             labeled_pairs=self.test_pairs,
             collection=[doc for doc in self.collection if doc in self.test_documents],
             negative_miner=self.negative_miner,
@@ -595,53 +738,80 @@ class AspectDatasetSplitter:
             seed=self.seed,
             debug=self.debug
         )
-        test_triplets = test_processor.process_data(
+        results["test"] = test_generator.generate_triplets(
             max_triplets_per_query=max_triplets_per_query,
             max_positives=max_positives,
             export_path=output_dir / "test"
         )
+        test_time = time.time() - test_start
+        triplet_gen_times["test"] = test_time
+        self.timing["triplet_generation"]["test"] = test_time
         
-        # Process rule-based test data with its own document set
-        rule_test_processor = AspectTrainingDataProcessor(
-            labeled_pairs=self.test_pairs + self.rule_based_test_pairs,
-            collection=[doc for doc in self.collection if doc in self.test_documents],
-            negative_miner=self.negative_miner,
-            aspect_delimiter=self.aspect_delimiter,
-            pos_neg_ratio=self.pos_neg_ratio,
-            negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0.0},
-            seed=self.seed,
-            debug=self.debug
-        )
-        rule_test_triplets = rule_test_processor.process_data(
-            max_triplets_per_query=max_triplets_per_query,
-            max_positives=max_positives,
-            export_path=output_dir / "test_rule_based"
-        )
-        
-        # Process miner-based test data if miner available
-        miner_test_triplets = None
-        if self.negative_miner:
-            miner_test_processor = AspectTrainingDataProcessor(
+        # Generate specialized test sets if requested
+        if include_specialized_test_sets:
+            # Rule-based test set - using the same test data but with only rule-based sampling
+            rule_test_start = time.time()
+            rule_test_generator = TripletGenerator(
                 labeled_pairs=self.test_pairs,
                 collection=[doc for doc in self.collection if doc in self.test_documents],
                 negative_miner=self.negative_miner,
                 aspect_delimiter=self.aspect_delimiter,
                 pos_neg_ratio=self.pos_neg_ratio,
-                negative_sampling_weights={"rule_based": 0.0, "random": 0.0, "miner": 1.0},
+                negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0.0},
                 seed=self.seed,
                 debug=self.debug
             )
-            miner_test_triplets = miner_test_processor.process_data(
+            results["test_rule_based"] = rule_test_generator.generate_triplets(
                 max_triplets_per_query=max_triplets_per_query,
                 max_positives=max_positives,
-                export_path=output_dir / "test_miner"
+                export_path=output_dir / "test_rule_based"
             )
+            rule_test_time = time.time() - rule_test_start
+            triplet_gen_times["test_rule_based"] = rule_test_time
+            self.timing["triplet_generation"]["test_rule_based"] = rule_test_time
+            
+            # Miner-based test set (if miner is available)
+            if self.negative_miner:
+                miner_test_start = time.time()
+                miner_test_generator = TripletGenerator(
+                    labeled_pairs=self.test_pairs,
+                    collection=[doc for doc in self.collection if doc in self.test_documents],
+                    negative_miner=self.negative_miner,
+                    aspect_delimiter=self.aspect_delimiter,
+                    pos_neg_ratio=self.pos_neg_ratio,
+                    negative_sampling_weights={"rule_based": 0.0, "random": 0.0, "miner": 1.0},
+                    seed=self.seed,
+                    debug=self.debug
+                )
+                results["test_miner"] = miner_test_generator.generate_triplets(
+                    max_triplets_per_query=max_triplets_per_query,
+                    max_positives=max_positives,
+                    export_path=output_dir / "test_miner"
+                )
+                miner_test_time = time.time() - miner_test_start
+                triplet_gen_times["test_miner"] = miner_test_time
+                self.timing["triplet_generation"]["test_miner"] = miner_test_time
+        
+        # Update timing information
+        total_time = time.time() - start_time
+        self.timing["process_data"] = total_time
+        
+        if self.debug:
+            # Calculate triplet counts
+            triplet_counts = {}
+            for split, result in results.items():
+                if isinstance(result, tuple) and result[0]:
+                    triplet_counts[split] = len(result[0])
+                elif isinstance(result, list):
+                    triplet_counts[split] = len(result)
+                else:
+                    triplet_counts[split] = 0
+            
+            print(f"\n⏱️ Data processing completed in {total_time:.2f}s")
+            for split, time_taken in triplet_gen_times.items():
+                count = triplet_counts.get(split, 0)
+                rate = count / time_taken if time_taken > 0 else 0
+                print(f"  - {split.capitalize()}: {time_taken:.2f}s, {count} triplets ({rate:.1f} triplets/s)")
         
         print(f"Processed all data splits and exported to {output_dir}")
-        return {
-            "train": train_triplets,
-            "val": val_triplets,
-            "test": test_triplets,
-            "test_rule_based": rule_test_triplets,
-            "test_miner": miner_test_triplets
-        }
+        return results

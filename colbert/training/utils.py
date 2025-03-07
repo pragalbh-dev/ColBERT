@@ -12,7 +12,7 @@ def print_progress(scores):
     print("#>>>   ", positive_avg, negative_avg, '\t\t|\t\t', positive_avg - negative_avg)
 
 
-def manage_checkpoints(args, colbert, optimizer, batch_idx, savepath=None, consumed_all_triples=False):
+def manage_checkpoints(args, colbert, optimizer, batch_idx, savepath=None, consumed_all_triples=False, is_best=False):
     # arguments = dict(args)
 
     # TODO: Call provenance() on the values that support it??
@@ -30,14 +30,16 @@ def manage_checkpoints(args, colbert, optimizer, batch_idx, savepath=None, consu
     
     path_save = None
 
-    if consumed_all_triples or (batch_idx % 2000 == 0):
-        # name = os.path.join(path, "colbert.dnn")
-        # save_checkpoint(name, 0, batch_idx, colbert, optimizer, arguments)
+    # Handle "best" checkpoint separately
+    if is_best:
+        path_save = os.path.join(checkpoints_path, "colbert-best")
+        print(f"#> Saving BEST checkpoint to {path_save} at step {batch_idx} ..")
+    
+    # Regular checkpoint saving logic
+    elif consumed_all_triples or (batch_idx % 2000 == 0):
         path_save = os.path.join(checkpoints_path, "colbert")
 
-    if batch_idx in SAVED_CHECKPOINTS:
-        # name = os.path.join(path, "colbert-{}.dnn".format(batch_idx))
-        # save_checkpoint(name, 0, batch_idx, colbert, optimizer, arguments)
+    elif batch_idx in SAVED_CHECKPOINTS:
         path_save = os.path.join(checkpoints_path, f"colbert-{batch_idx}")
 
     if path_save:

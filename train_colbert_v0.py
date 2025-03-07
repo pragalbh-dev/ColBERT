@@ -186,9 +186,7 @@ def train():
         triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
         queries = str(data_dir / "train" / "queries.train.colbert.tsv")
         collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
-        val_triples = str(data_dir / "val" / "triples.val.colbert.jsonl")
-        val_queries = str(data_dir / "val" / "queries.val.colbert.tsv")
-        val_collection = str(data_dir / "val" / "corpus.val.colbert.tsv")
+        
         # Initialize trainer and run training
         print("Starting training...")
         
@@ -198,7 +196,7 @@ def train():
                         'enable_tensorboard':True,
                         'rank':0}
         
-        trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,tracker_config=tracker_config,val_triples=val_triples,val_queries=val_queries,val_collection=val_collection)
+        trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,tracker_config=tracker_config)
         trainer.train(checkpoint='bert-base-uncased')
         
         # Get the path to the best checkpoint
@@ -211,4 +209,4 @@ def train():
     print(f"Done! in {time.time()-s}")
 
 if __name__ == "__main__":
-    train()
+    train() 

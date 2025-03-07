@@ -20,7 +20,7 @@ from tqdm import tqdm
 import random
 
 class LazyBatcher():
-    def __init__(self, config: ColBERTConfig, triples, queries, collection, rank=0, nranks=1, shuffle=True, fb_protection=False):
+    def __init__(self, config: ColBERTConfig, triples, queries, collection, rank=0, nranks=1, shuffle=True, fb_protection=False,divide_into_groups=True):
         """
         Args:
             triples: List of triples (query_id, pos_id, neg_id)
@@ -30,16 +30,21 @@ class LazyBatcher():
             nranks: Total number of ranks for distributed training
             shuffle: Whether to shuffle the triples
             fb_protection: Whether to protect against false negatives in batch
+            divide_into_groups: Whether to divide the triples into groups based on rank of process |  basically for distributed training
         """
         self.bsize, self.accumsteps = config.bsize, config.accumsteps
         self.nway = config.nway
-
+        self.divide_into_groups = divide_into_groups
         self.query_tokenizer = QueryTokenizer(config)
         self.doc_tokenizer = DocTokenizer(config)
         self.tensorize_triples = partial(tensorize_triples, self.query_tokenizer, self.doc_tokenizer)
         self.position = 0
 
-        self.triples = Examples.cast(triples, nway=self.nway).tolist(rank, nranks)
+        if self.divide_into_groups:
+            self.triples = Examples.cast(triples, nway=self.nway).tolist(rank, nranks)
+        else:
+            self.triples = Examples.cast(triples, nway=self.nway).tolist()
+        
         self.queries = Queries.cast(queries)
         self.collection = Collection.cast(collection)
         assert len(self.triples) > 0, "Received no triples on which to train."

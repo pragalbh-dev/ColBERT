@@ -7,12 +7,13 @@ import seaborn as sns
 from pathlib import Path
 from collections import defaultdict, Counter
 from typing import Dict, List, Tuple, Set, Optional
+import time
 
 # Import our data generator
 from create_synthetic_dataset import AspectDatasetGenerator, load_dataset_for_processor
 
 # Import the processor and splitter from colbert
-from colbert.data.train_data_preprocessor import AspectTrainingDataProcessor, AspectDatasetSplitter
+from colbert.data.train_data_preprocessor import TripletGenerator, TripletDatasetSplitter
 
 def create_and_analyze_dataset(
     output_dir: str = "data/human_verification",
@@ -24,13 +25,14 @@ def create_and_analyze_dataset(
     aspect_delimiter: str = "||"
 ):
     """
-    Create a small verifiable dataset, process it with AspectDatasetSplitter, and analyze results.
+    Create a small verifiable dataset, process it with TripletDatasetSplitter, and analyze results.
     """
     output_dir = Path(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. Generate synthetic dataset
     print("Generating synthetic dataset...")
+    start_time = time.time()
     generator = AspectDatasetGenerator(
         seed=seed,
         num_aspects=num_aspects,
@@ -48,10 +50,14 @@ def create_and_analyze_dataset(
     
     # Get dataset in processor-compatible format
     labeled_pairs, collection = generator.get_dataset_for_processor()
+    data_gen_time = time.time() - start_time
+    print(f"⏱️ Synthetic data generation completed in {data_gen_time:.2f} seconds")
+    print(f"📊 Generated {len(labeled_pairs)} labeled pairs, {len(collection)} documents")
     
-    # 2. Split and process dataset using AspectDatasetSplitter
-    print("\nSplitting and processing dataset...")
-    splitter = AspectDatasetSplitter(
+    # 2. Split dataset using TripletDatasetSplitter
+    print(f"\n2. Creating splits using TripletDatasetSplitter...")
+    split_start_time = time.time()
+    splitter = TripletDatasetSplitter(
         labeled_pairs=labeled_pairs,
         collection=collection,
         negative_miner=None,  # No miner for this demo
@@ -62,7 +68,15 @@ def create_and_analyze_dataset(
         debug=True  # Enable debug mode for more detailed output
     )
     
-    # Process and split the data
+    # Split the dataset into train/val/test
+    splitter.split_dataset()
+    split_time = time.time() - split_start_time
+    print(f"⏱️ Dataset splitting completed in {split_time:.2f} seconds")
+    print(f"📊 Split sizes - Train: {len(splitter.train_pairs)}, Val: {len(splitter.val_pairs)}, Test: {len(splitter.test_pairs)}")
+    
+    # 3. Generate triplets for each split
+    print(f"\n3. Generating triplets for each split...")
+    triplet_start_time = time.time()
     results = splitter.process_data(
         output_dir=output_dir,
         max_triplets_per_query=10,  # Small number for verification
@@ -72,14 +86,40 @@ def create_and_analyze_dataset(
         val_negative_sampling_weights={"rule_based": 0.5, "random": 0.5, "miner": 0.0},
         test_negative_sampling_weights={"rule_based": 0.5, "random": 0.5, "miner": 0.0}
     )
+    triplet_gen_time = time.time() - triplet_start_time
+    total_triplets = sum(len(results[split][0]) if isinstance(results[split], tuple) and results[split][0] else 0 
+                         for split in ["train", "val", "test", "test_rule_based"])
+    print(f"⏱️ Triplet generation completed in {triplet_gen_time:.2f} seconds")
+    print(f"📊 Generated {total_triplets} total triplets")
     
-    # 3. Analyze the processed data
+    # Per-split timing breakdown
     train_triplets = results["train"]
     val_triplets = results["val"]
     test_triplets = results["test"]
     rule_test_triplets = results["test_rule_based"]
     
-    # Calculate statistics
+    train_count = len(train_triplets[0]) if isinstance(train_triplets, tuple) and train_triplets[0] else 0
+    val_count = len(val_triplets[0]) if isinstance(val_triplets, tuple) and val_triplets[0] else 0
+    test_count = len(test_triplets[0]) if isinstance(test_triplets, tuple) and test_triplets[0] else 0
+    rule_test_count = len(rule_test_triplets[0]) if isinstance(rule_test_triplets, tuple) and rule_test_triplets[0] else 0
+    
+    # Calculate rate (triplets/second) for each split
+    total_pairs = len(labeled_pairs)
+    print(f"\n⏱️ Performance Metrics:")
+    print(f"  - Overall: {total_pairs / (data_gen_time + split_time + triplet_gen_time):.2f} labeled pairs/second")
+    print(f"  - Data Generation: {total_pairs / data_gen_time:.2f} labeled pairs/second")
+    print(f"  - Dataset Splitting: {total_pairs / split_time:.2f} labeled pairs/second")
+    print(f"  - Triplet Generation: {total_triplets / triplet_gen_time:.2f} triplets/second")
+    
+    # Print triplet counts per split
+    print(f"\n📊 Triplet Counts per Split:")
+    print(f"  - Train: {train_count} triplets")
+    print(f"  - Val: {val_count} triplets")
+    print(f"  - Test: {test_count} triplets")
+    print(f"  - Test (rule-based): {rule_test_count} triplets")
+    
+    # 4. Analyze the processed data
+    analysis_start_time = time.time()
     create_analysis(
         splitter=splitter,
         generator=generator,
@@ -87,6 +127,16 @@ def create_and_analyze_dataset(
         output_dir=output_dir,
         train_val_test_ratio=train_val_test_ratio
     )
+    analysis_time = time.time() - analysis_start_time
+    
+    # Final timing summary
+    total_time = data_gen_time + split_time + triplet_gen_time + analysis_time
+    print(f"\n⏱️ Timing Summary:")
+    print(f"  - Data Generation: {data_gen_time:.2f}s ({data_gen_time/total_time*100:.1f}%)")
+    print(f"  - Dataset Splitting: {split_time:.2f}s ({split_time/total_time*100:.1f}%)")
+    print(f"  - Triplet Generation: {triplet_gen_time:.2f}s ({triplet_gen_time/total_time*100:.1f}%)")
+    print(f"  - Analysis: {analysis_time:.2f}s ({analysis_time/total_time*100:.1f}%)")
+    print(f"  - Total Time: {total_time:.2f}s")
     
     print(f"\nVerification dataset created and processed successfully!")
     print(f"All data and statistics are available in: {output_dir}")
@@ -301,11 +351,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Create and analyze a verifiable dataset for aspect-based retrieval")
     parser.add_argument("--output-dir", type=str, default="data/human_verification", 
                         help="Directory to store the dataset and analysis")
-    parser.add_argument("--num-aspects", type=int, default=3,
+    parser.add_argument("--num-aspects", type=int, default=10,
                         help="Number of aspects to generate")
-    parser.add_argument("--num-queries", type=int, default=15,
+    parser.add_argument("--num-queries", type=int, default=200,
                         help="Number of queries per aspect")
-    parser.add_argument("--num-docs", type=int, default=500,
+    parser.add_argument("--num-docs", type=int, default=10000,
                         help="Number of documents to generate")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")

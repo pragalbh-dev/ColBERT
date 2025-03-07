@@ -7,11 +7,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import time
 
-from colbert.data.train_data_preprocessor import AspectTrainingDataProcessor
+from colbert.data.train_data_preprocessor import TripletGenerator, TripletDatasetSplitter
 from colbert.negative_miners.simple_miner import SimpleMiner
 
 def test_aspect_processor():
-    """Test AspectTrainingDataProcessor with synthetic data."""
+    """Test TripletGenerator with synthetic data."""
     
     # Set random seed for reproducibility
     random.seed(42)
@@ -65,7 +65,7 @@ def test_aspect_processor():
         shutil.rmtree(test_dir)
     
     # Initialize processor
-    processor = AspectTrainingDataProcessor(
+    processor = TripletGenerator(
         labeled_pairs=labeled_pairs,
         collection=collection,
         negative_miner=None,  # No miner for this test
@@ -171,7 +171,7 @@ def test_aspect_processor():
     return test_dir
 
 def test_aspect_processor_debug():
-    """Test AspectTrainingDataProcessor with debug mode enabled."""
+    """Test TripletGenerator with debug mode enabled."""
     
     # Set random seed for reproducibility
     random.seed(42)
@@ -225,7 +225,7 @@ def test_aspect_processor_debug():
         shutil.rmtree(test_dir)
     
     # Initialize processor with debug=True
-    processor = AspectTrainingDataProcessor(
+    processor = TripletGenerator(
         labeled_pairs=labeled_pairs,
         collection=collection,
         negative_miner=None,
@@ -296,7 +296,7 @@ def test_aspect_processor_debug():
     return test_dir
 
 def test_with_simple_miner():
-    """Test AspectTrainingDataProcessor with SimpleMiner for hard negative mining."""
+    """Test TripletGenerator with SimpleMiner for hard negative mining."""
     
     # Set random seed for reproducibility
     random.seed(42)
@@ -370,7 +370,7 @@ def test_with_simple_miner():
     if test_dir_no_miner.exists():
         shutil.rmtree(test_dir_no_miner)
     
-    processor_no_miner = AspectTrainingDataProcessor(
+    processor_no_miner = TripletGenerator(
         labeled_pairs=labeled_pairs,
         collection=collection,
         negative_miner=None,
@@ -398,7 +398,7 @@ def test_with_simple_miner():
     if test_dir_with_miner.exists():
         shutil.rmtree(test_dir_with_miner)
     
-    processor_with_miner = AspectTrainingDataProcessor(
+    processor_with_miner = TripletGenerator(
         labeled_pairs=labeled_pairs,
         collection=collection,
         negative_miner=miner,
@@ -476,7 +476,7 @@ def test_with_simple_miner():
     }
 
 def test_aspect_dataset_splitter():
-    """Test AspectDatasetSplitter with synthetic data."""
+    """Test TripletDatasetSplitter with synthetic data."""
     
     # Set random seed for reproducibility
     random.seed(42)
@@ -565,18 +565,16 @@ def test_aspect_dataset_splitter():
     if test_dir.exists():
         shutil.rmtree(test_dir)
     
-    # Initialize dataset splitter
-    from colbert.data.train_data_preprocessor import AspectDatasetSplitter
-    
-    splitter = AspectDatasetSplitter(
+    # Initialize the splitter
+    splitter = TripletDatasetSplitter(
         labeled_pairs=labeled_pairs,
         collection=collection,
-        negative_miner=miner,
+        negative_miner=None,  # No need for a miner in this test
         aspect_delimiter="||",
-        train_val_test_ratio=(0.6, 0.2, 0.2),  # 60/20/20 split
+        train_val_test_ratio=(0.6, 0.2, 0.2),
         pos_neg_ratio=1.0,
         seed=42,
-        debug=True
+        debug=True  # Enable debug mode
     )
     
     # Split the dataset

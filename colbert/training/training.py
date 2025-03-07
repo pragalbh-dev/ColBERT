@@ -20,7 +20,86 @@ from colbert.training.utils import print_progress, manage_checkpoints
 
 import torch.distributed as dist
 from colbert.infra.run import Run
-def train(config: ColBERTConfig, triples, queries=None, collection=None):
+
+def validate(colbert, val_reader, config, step_idx):
+    """
+    Calculate validation loss on the validation dataset.
+    
+    Args:
+        colbert: The model to evaluate
+        val_reader: LazyBatcher for validation data
+        config: ColBERTConfig containing training parameters
+        step_idx: Current training step index for logging
+        
+    Returns:
+        The average validation loss
+    """
+    # Switch to evaluation mode
+    training = colbert.training
+    colbert.eval()
+    
+    validation_loss = torch.tensor(0.0, device=DEVICE)
+    num_batches = 0
+    
+    # Labels tensor for CrossEntropyLoss
+    labels = torch.zeros(config.bsize, dtype=torch.long, device=DEVICE)
+    
+    with torch.no_grad():
+        for val_batch in val_reader:
+            # Process validation batch
+            try:
+                queries, passages, target_scores = val_batch
+                encoding = [queries, passages]
+            except:
+                encoding, target_scores = val_batch
+                encoding = [encoding.to(DEVICE)]
+                
+            scores = colbert(*encoding)
+            
+            if config.use_ib_negatives:
+                scores, _ = scores
+                
+            scores = scores.view(-1, config.nway)
+            
+            # Calculate loss
+            if len(target_scores) and not config.ignore_scores:
+                target_scores = torch.tensor(target_scores).view(-1, config.nway).to(DEVICE)
+                target_scores = target_scores * config.distillation_alpha
+                target_scores = torch.nn.functional.log_softmax(target_scores, dim=-1)
+                log_scores = torch.nn.functional.log_softmax(scores, dim=-1)
+                batch_loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=True)(log_scores, target_scores)
+            else:
+                batch_loss = nn.CrossEntropyLoss()(scores, labels[:scores.size(0)])
+            
+            validation_loss += batch_loss
+            num_batches += 1
+    
+    is_distributed = config.nranks > 1 and dist.is_available() and dist.is_initialized()
+    
+    # Wait for all processes to finish evaluation
+    if is_distributed:
+        dist.barrier()
+        
+        # Sum validation losses from all processes
+        dist.all_reduce(validation_loss, op=dist.ReduceOp.SUM)
+        
+        # Average the validation loss (divide by world_size * num_batches)
+        avg_val_loss = validation_loss / (dist.get_world_size() * max(1, num_batches))
+    else:
+        avg_val_loss = validation_loss / max(1, num_batches)
+    
+    # Only rank 0 logs results
+    if config.rank < 1:
+        Run().log_metric('val/loss', avg_val_loss.item(), step=step_idx)
+        print_message(f"Step {step_idx}: Validation loss = {avg_val_loss.item():.4f}")
+    
+    # Restore the previous training mode
+    if training:
+        colbert.train()
+    
+    return avg_val_loss.item()
+
+def train(config: ColBERTConfig, triples, queries=None, collection=None,val_triples=None,val_queries=None,val_collection=None):
     config.checkpoint = config.checkpoint or 'bert-base-uncased'
     
     if config.rank < 1:
@@ -42,6 +121,7 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
             reader = RerankBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks)
         else:
             reader = LazyBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks)
+            val_reader = LazyBatcher(config, val_triples, val_queries, val_collection, (0 if config.rank == -1 else config.rank), config.nranks)
     else:
         raise NotImplementedError()
 
@@ -80,6 +160,10 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
     train_loss_mu = 0.999
 
     start_batch_idx = 0
+    
+    # Configure validation settings
+    val_check_interval = config.val_check_interval if hasattr(config, 'val_check_interval') else 100
+    best_val_loss = float('inf')
 
     # if config.resume:
     #     assert config.checkpoint is not None
@@ -139,14 +223,24 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None):
         train_loss = train_loss_mu * train_loss + (1 - train_loss_mu) * this_batch_loss
 
         amp.step(colbert, optimizer, scheduler) ### updating the model parameters
-        print(f'logging in the main process: {Run().rank}')
-        if Run().rank ==0:
-            print(f'logging in the main process')
+        
+        # Log training metrics
+        if Run().rank == 0:
             print_message(batch_idx, train_loss)
             # Add tracking of training loss
-            
             Run().log_metric('train/loss', train_loss, step=batch_idx)
+        
+        # Run validation at regular intervals
+        if val_triples is not None and (batch_idx + 1) % val_check_interval == 0:
+            val_loss = validate(colbert, val_reader, config, batch_idx)
             
+            # Save best model based on validation loss
+            if val_loss < best_val_loss and config.rank < 1:
+                best_val_loss = val_loss
+                manage_checkpoints(config, colbert, optimizer, batch_idx+1, savepath=None, is_best=True)
+        
+        # Regular checkpoint saving
+        if config.rank < 1:
             manage_checkpoints(config, colbert, optimizer, batch_idx+1, savepath=None)
 
     if config.rank < 1:

@@ -6,13 +6,16 @@ from colbert.training.training import train
 
 
 class Trainer:
-    def __init__(self, triples, queries, collection, config=None,tracker_config=None):
+    def __init__(self, triples, queries, collection, config=None,tracker_config=None,val_triples=None,val_queries=None,val_collection=None):
         self.config = ColBERTConfig.from_existing(config, Run().config)
 
         self.triples = triples
         self.queries = queries
         self.collection = collection
         self.tracker_config=tracker_config
+        self.val_triples = val_triples
+        self.val_queries = val_queries
+        self.val_collection = val_collection
         
     def configure(self, **kw_args):
         self.config.configure(**kw_args)
@@ -27,7 +30,7 @@ class Trainer:
         self.configure(triples=self.triples, queries=self.queries, collection=self.collection)
         self.configure(checkpoint=checkpoint)
         
-        launcher = Launcher(train,tracker_config=tracker_config)
+        launcher = Launcher(train,tracker_config=self.tracker_config)
 
         self._best_checkpoint_path = launcher.launch(self.config, self.triples, self.queries, self.collection)
 
@@ -38,10 +41,11 @@ class Trainer:
 
 # Create a custom trainer for single-GPU training that properly uses avoid_fork_if_possible
 class SingleGPUTrainer(Trainer):
-    def __init__(self, triples, queries, collection, config=None,tracker_config=None):
-        super().__init__(triples, queries, collection, config, tracker_config=tracker_config)
+    def __init__(self, triples, queries, collection, config=None,tracker_config=None,val_triples=None,val_queries=None,val_collection=None):
+        super().__init__(triples, queries, collection, config, tracker_config=tracker_config,val_triples=val_triples,val_queries=val_queries,val_collection=val_collection)
         
     def train(self, checkpoint='bert-base-uncased'):
+        
         """
         Override train method to use launch_without_fork for single-GPU training.
         This ensures that avoid_fork_if_possible=True is properly respected.
