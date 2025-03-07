@@ -36,7 +36,7 @@ def manage_checkpoints(args, colbert, optimizer, batch_idx, savepath=None, consu
         print(f"#> Saving BEST checkpoint to {path_save} at step {batch_idx} ..")
     
     # Regular checkpoint saving logic
-    elif consumed_all_triples or (batch_idx % 2000 == 0):
+    elif consumed_all_triples or (batch_idx % 50 == 0):
         path_save = os.path.join(checkpoints_path, "colbert")
 
     elif batch_idx in SAVED_CHECKPOINTS:

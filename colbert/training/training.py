@@ -40,39 +40,48 @@ def validate(colbert, val_reader, config, step_idx):
     
     validation_loss = torch.tensor(0.0, device=DEVICE)
     num_batches = 0
-    
+    print("validation")
     # Labels tensor for CrossEntropyLoss
     labels = torch.zeros(config.bsize, dtype=torch.long, device=DEVICE)
-    
+    start_batch_idx=0
     with torch.no_grad():
-        for val_batch in val_reader:
-            # Process validation batch
-            try:
-                queries, passages, target_scores = val_batch
-                encoding = [queries, passages]
-            except:
-                encoding, target_scores = val_batch
-                encoding = [encoding.to(DEVICE)]
+        # Match the training loop's iteration pattern
+        # for batch_idx, BatchSteps in zip(range(start_batch_idx, config.maxsteps), val_reader):
+        i=0
+        for BatchSteps in val_reader:
+            print("batch steps")
+            # Now iterate over each batch in BatchSteps
+            for val_batch in BatchSteps:
+                print("val batch: {}".format(i))
+                i+=1
+                # Process validation batch
+                try:
+                    queries, passages, target_scores = val_batch
+                    encoding = [queries, passages]
+                except:
+                    encoding, target_scores = val_batch
+                    encoding = [encoding.to(DEVICE)]
+                    
+                scores = colbert(*encoding)
                 
-            scores = colbert(*encoding)
-            
-            if config.use_ib_negatives:
-                scores, _ = scores
+                if config.use_ib_negatives:
+                    scores, _ = scores
+                    
+                scores = scores.view(-1, config.nway)
                 
-            scores = scores.view(-1, config.nway)
-            
-            # Calculate loss
-            if len(target_scores) and not config.ignore_scores:
-                target_scores = torch.tensor(target_scores).view(-1, config.nway).to(DEVICE)
-                target_scores = target_scores * config.distillation_alpha
-                target_scores = torch.nn.functional.log_softmax(target_scores, dim=-1)
-                log_scores = torch.nn.functional.log_softmax(scores, dim=-1)
-                batch_loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=True)(log_scores, target_scores)
-            else:
-                batch_loss = nn.CrossEntropyLoss()(scores, labels[:scores.size(0)])
-            
-            validation_loss += batch_loss
-            num_batches += 1
+                # Calculate loss
+                if len(target_scores) and not config.ignore_scores:
+                    target_scores = torch.tensor(target_scores).view(-1, config.nway).to(DEVICE)
+                    target_scores = target_scores * config.distillation_alpha
+                    target_scores = torch.nn.functional.log_softmax(target_scores, dim=-1)
+                    log_scores = torch.nn.functional.log_softmax(scores, dim=-1)
+                    batch_loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=True)(log_scores, target_scores)
+                else:
+                    batch_loss = nn.CrossEntropyLoss()(scores, labels[:scores.size(0)])
+                
+                validation_loss += batch_loss
+                num_batches += 1
+                print(num_batches,'batches done')
     
     is_distributed = config.nranks > 1 and dist.is_available() and dist.is_initialized()
     
@@ -94,8 +103,8 @@ def validate(colbert, val_reader, config, step_idx):
         print_message(f"Step {step_idx}: Validation loss = {avg_val_loss.item():.4f}")
     
     # Restore the previous training mode
-    if training:
-        colbert.train()
+    # if training:
+    colbert.train()
     
     return avg_val_loss.item()
 
@@ -120,8 +129,8 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None,val_trip
         if config.reranker:
             reader = RerankBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks)
         else:
-            reader = LazyBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks)
-            val_reader = LazyBatcher(config, val_triples, val_queries, val_collection, (0 if config.rank == -1 else config.rank), config.nranks)
+            reader = LazyBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks,shuffle=True)
+            val_reader = LazyBatcher(config, val_triples, val_queries, val_collection, (0 if config.rank == -1 else config.rank), config.nranks,shuffle=False)
     else:
         raise NotImplementedError()
 
@@ -162,7 +171,7 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None,val_trip
     start_batch_idx = 0
     
     # Configure validation settings
-    val_check_interval = config.val_check_interval if hasattr(config, 'val_check_interval') else 100
+    val_check_interval = config.val_check_interval if hasattr(config, 'val_check_interval') else 50
     best_val_loss = float('inf')
 
     # if config.resume:

@@ -91,7 +91,7 @@ class Launcher:
         assert (custom_config.avoid_fork_if_possible or self.run_config.avoid_fork_if_possible)
 
         new_config = type(custom_config).from_existing(custom_config, self.run_config, RunConfig(rank=0))
-        return_val = run_process_without_mp(self.callee, new_config, *args)
+        return_val = run_process_without_mp(self.callee, new_config,self.tracker_config, *args)
 
         return return_val
 
@@ -102,11 +102,15 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def run_process_without_mp(callee, config, *args):
+def run_process_without_mp(callee, config,tracker_config, *args):
     set_seed(12345)
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, config.gpus_[:config.nranks]))
 
     with Run().context(config, inherit_config=False):
+        if config.rank==0:
+            tracker=ColBERTTracker(**tracker_config)
+            Run().set_tracker(tracker)
+            Run().tracker.log_config(config.export())
         return_val = callee(config, *args)
         torch.cuda.empty_cache()
         return return_val

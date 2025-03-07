@@ -51,7 +51,7 @@ class SingleGPUTrainer(Trainer):
         This ensures that avoid_fork_if_possible=True is properly respected.
         """
         # Configure resources like the original train method
-        self.configure(triples=self.triples, queries=self.queries, collection=self.collection)
+        self.configure(triples=self.triples, queries=self.queries, collection=self.collection,val_triples=self.val_triples,val_queries=self.val_queries,val_collection=self.val_collection)
         self.configure(checkpoint=checkpoint)
         
         # Create the launcher with the training function
@@ -60,8 +60,8 @@ class SingleGPUTrainer(Trainer):
         # Check if we should avoid forking
         if hasattr(self.config, 'avoid_fork_if_possible') and self.config.avoid_fork_if_possible and self.config.nranks == 1:
             # Use launch_without_fork for single-GPU training
-            self._best_checkpoint_path = launcher.launch_without_fork(self.config, self.triples, self.queries, self.collection)
+            self._best_checkpoint_path = launcher.launch_without_fork(self.config, self.triples, self.queries, self.collection,self.val_triples,self.val_queries,self.val_collection)
         else:
             # Use standard launch for multi-GPU training
-            self._best_checkpoint_path = launcher.launch(self.config, self.triples, self.queries, self.collection)
+            self._best_checkpoint_path = launcher.launch(self.config, self.triples, self.queries, self.collection,self.val_triples,self.val_queries,self.val_collection)
             

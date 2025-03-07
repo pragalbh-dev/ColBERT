@@ -47,6 +47,7 @@ class LazyBatcher():
         
         self.queries = Queries.cast(queries)
         self.collection = Collection.cast(collection)
+        print('len(self.triples),len(self.queries),len(self.collection)',len(self.triples),len(self.queries),len(self.collection))
         assert len(self.triples) > 0, "Received no triples on which to train."
         assert len(self.queries) > 0, "Received no queries on which to train."
         assert len(self.collection) > 0, "Received no collection on which to train."

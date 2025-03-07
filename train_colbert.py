@@ -11,6 +11,9 @@ from colbert.infra.config import ColBERTConfig, RunConfig
 # from colbert.trainer import Trainer
 from colbert.trainer import SingleGPUTrainer as Trainer
 from colbert.utils.tracker import ColBERTTracker
+def load_real_data():
+
+    pass
 
 def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",multiplier=None):
     """Create a small synthetic dataset for testing"""
@@ -69,7 +72,7 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
     return labeled_pairs, documents
 
 def train():
-    nranks=4
+    nranks=1
 
     avoid_fork_if_possible=False
     if nranks<=1:
@@ -93,7 +96,7 @@ def train():
     
     # 2. Create a sample dataset
     print("Creating sample dataset...")
-    labeled_pairs, documents = create_sample_dataset(num_queries=200, num_docs=5000,multiplier=10)
+    labeled_pairs, documents = create_sample_dataset(num_queries=20, num_docs=500,multiplier=None)
     
     # 3. Split the dataset
     print("Splitting dataset...")
@@ -158,7 +161,7 @@ def train():
         
         # ColBERT configuration
         config = ColBERTConfig(
-            bsize=32*nranks,  # Small batch size for testing
+            bsize=2*nranks,  # Small batch size for testing
             accumsteps=1,
             lr=5e-6,
             nway=2,  # Binary pairs for simplicity  
@@ -167,7 +170,7 @@ def train():
             dim=128,
             similarity="cosine",
             use_ib_negatives=False,
-            maxsteps=10,  # Limit training steps
+            maxsteps=100,  # Limit training steps
             warmup=10,
             nranks=nranks
         )
@@ -186,9 +189,9 @@ def train():
         triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
         queries = str(data_dir / "train" / "queries.train.colbert.tsv")
         collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
-        val_triples = str(data_dir / "val" / "triples.val.colbert.jsonl")
-        val_queries = str(data_dir / "val" / "queries.val.colbert.tsv")
-        val_collection = str(data_dir / "val" / "corpus.val.colbert.tsv")
+        val_triples = str(data_dir / "val" / "triples.train.colbert.jsonl")
+        val_queries = str(data_dir / "val" / "queries.train.colbert.tsv")
+        val_collection = str(data_dir / "val" / "corpus.train.colbert.tsv")
         # Initialize trainer and run training
         print("Starting training...")
         
