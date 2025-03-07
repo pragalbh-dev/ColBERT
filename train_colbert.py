@@ -172,7 +172,10 @@ def train():
             use_ib_negatives=False,
             maxsteps=100,  # Limit training steps
             warmup=10,
-            nranks=nranks
+            nranks=nranks,
+            val_check_interval=5,
+            val_ema_alpha=0.9
+
         )
         
         # Make sure to pass the RunConfig settings to the ColBERTConfig

@@ -40,10 +40,12 @@ def validate(colbert, val_reader, config, step_idx):
     
     validation_loss = torch.tensor(0.0, device=DEVICE)
     num_batches = 0
-    print("validation")
+    
     # Labels tensor for CrossEntropyLoss
     labels = torch.zeros(config.bsize, dtype=torch.long, device=DEVICE)
+    print("validation")
     start_batch_idx=0
+    
     with torch.no_grad():
         # Match the training loop's iteration pattern
         # for batch_idx, BatchSteps in zip(range(start_batch_idx, config.maxsteps), val_reader):
@@ -97,16 +99,30 @@ def validate(colbert, val_reader, config, step_idx):
     else:
         avg_val_loss = validation_loss / max(1, num_batches)
     
+    # Apply exponential moving average (EMA) smoothing to validation loss
+    # Default smoothing factor if not specified
+    val_ema_alpha = 0.8 if not hasattr(config, 'val_ema_alpha') else config.val_ema_alpha
+    
+    # Initialize smoothed loss on first validation or update existing
+    if not hasattr(config, 'smoothed_val_loss'):
+        print("initializing smoothed val loss")
+        config.smoothed_val_loss = avg_val_loss.item()
+    else:
+        config.smoothed_val_loss = val_ema_alpha * config.smoothed_val_loss + (1 - val_ema_alpha) * avg_val_loss.item()
+    
     # Only rank 0 logs results
     if config.rank < 1:
-        Run().log_metric('val/loss', avg_val_loss.item(), step=step_idx)
-        print_message(f"Step {step_idx}: Validation loss = {avg_val_loss.item():.4f}")
+        # Log both raw and smoothed validation loss
+        Run().log_metric('val/loss_raw', avg_val_loss.item(), step=step_idx)
+        Run().log_metric('val/loss_smooth', config.smoothed_val_loss, step=step_idx)
+        print_message(f"Step {step_idx}: Val loss = {avg_val_loss.item():.4f}, Smoothed = {config.smoothed_val_loss:.4f}")
     
     # Restore the previous training mode
     # if training:
     colbert.train()
     
-    return avg_val_loss.item()
+    # Return smoothed validation loss for model selection
+    return config.smoothed_val_loss
 
 def train(config: ColBERTConfig, triples, queries=None, collection=None,val_triples=None,val_queries=None,val_collection=None):
     config.checkpoint = config.checkpoint or 'bert-base-uncased'
