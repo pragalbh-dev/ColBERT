@@ -50,6 +50,34 @@ class SimpleMiner(HardNegativeMiner):
         self.max_rank = 100  # Default value until build_index is called
         self.corpus_map = {}  # Initialize empty map
 
+    def free_gpu_memory(self):
+        """
+        Releases GPU memory used by the model by moving it to CPU,
+        deleting it, and clearing the CUDA cache.
+        """
+        if hasattr(self, 'model'):
+            # Move model to CPU first
+            self.model.to('cpu')
+            
+            # Delete the model
+            del self.model
+            self.model = None
+            
+            # Clear CUDA cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            print("SimpleMiner model removed from GPU and memory cleared.")
+        
+        # If voyager index exists and has any GPU components, free those too
+        if hasattr(self, 'voyager_index'):
+            # Keep index metadata but free any GPU resources
+            self.has_index = False
+            del self.voyager_index
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
     def build_index(
         self,
         collection,
