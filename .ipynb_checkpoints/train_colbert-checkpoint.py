@@ -2,15 +2,27 @@ import os
 import random
 import torch
 import numpy as np
+import pickle
 import time
 from pathlib import Path
-
-from colbert.data.train_data_preprocessor import AspectDatasetSplitter
+import pandas as pd
+from colbert.data.train_data_preprocessor import TripletDatasetSplitter
 from colbert.infra.run import Run
 from colbert.infra.config import ColBERTConfig, RunConfig
 # from colbert.trainer import Trainer
 from colbert.trainer import SingleGPUTrainer as Trainer
 from colbert.utils.tracker import ColBERTTracker
+from colbert.negative_miners.simple_miner import SimpleMiner
+
+def load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||'):
+    labeled_pairs=pd.read_pickle(labeled_pairs_path)
+    collections=pd.read_csv(collections_path,sep='\t')
+    aspect_delimiter
+    labeled_pairs['made_up_query']=labeled_pairs.apply(lambda x:f'{x.aspect}{aspect_delimiter}{x.actual_query}',axis=1)
+    
+    labeled_pairs=list(zip(labeled_pairs.made_up_query.to_list(),labeled_pairs.collection.to_list(),labeled_pairs.label.to_list()))
+    collections=collections.collection.to_list()
+    return labeled_pairs,collections
 
 def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",multiplier=None):
     """Create a small synthetic dataset for testing"""
@@ -68,7 +80,7 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
     print(f"Collection has {len(documents)} documents")
     return labeled_pairs, documents
 
-def train():
+def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
     nranks=4
 
     avoid_fork_if_possible=False
@@ -92,29 +104,63 @@ def train():
     os.makedirs(data_dir, exist_ok=True)
     
     # 2. Create a sample dataset
-    print("Creating sample dataset...")
-    labeled_pairs, documents = create_sample_dataset(num_queries=200, num_docs=5000,multiplier=10)
-    
+    s=time.time()
+    if labelled_pairs_path is None:
+        print("Creating sample dataset...")
+        labeled_pairs, documents = create_sample_dataset(num_queries=20, num_docs=500,multiplier=None)
+    else:
+        print("loading dataset...")
+        labeled_pairs, documents=load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||')
+        
+    print(f'time for loading = {time.time()-s}')
+    s=time.time()
     # 3. Split the dataset
     print("Splitting dataset...")
-    splitter = AspectDatasetSplitter(
+    negative_miner=SimpleMiner(language_code='other')
+    
+    splitter = TripletDatasetSplitter(
         labeled_pairs=labeled_pairs,
         collection=documents,
-        negative_miner=None,  # No need for a miner in this example
+        negative_miner=negative_miner,  # No need for a miner in this example
         aspect_delimiter="||",
-        train_val_test_ratio=(0.7, 0.1, 0.2),
-        pos_neg_ratio=1.0,
+        train_val_test_ratio=(0.85, 0.02, 0.13),
+        train_pos_neg_ratio=64.0,
+        val_pos_neg_ratio=4.0,
+        test_pos_neg_ratio=12.0,
         seed=42,
         debug=False
     )
     
+    print(f'time for splitting = {time.time()-s}')
     # Split and process the dataset
-    datasets = splitter.process_data(
-        output_dir=data_dir,
-        max_triplets_per_query=100,  # Increased from 10
-        max_positives=10  # Increased from 2
-    )
+    s=time.time()
+    if os.path.exists('/home/ec2-user/SageMaker/data/triplets.pkl') and load_from_disk:
+        try:
+            datasets=pd.read_pickle('/home/ec2-user/SageMaker/data/triplets.pkl')
+        except Exception as e:
+            print(f'cannot read: {e}')
+            datasets = splitter.process_data(
+            output_dir=data_dir,
+            max_triplets_per_query=10000,  # Increased from 10
+            max_positives=100  # Increased from 2
+            )
+        
+            with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
+                pickle.dump(datasets,f)
+    else:
+        datasets = splitter.process_data(
+            output_dir=data_dir,
+            max_triplets_per_query=10000,  # Increased from 10
+            max_positives=100  # Increased from 2
+        )
     
+        with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
+            pickle.dump(datasets,f)
+    del negative_miner
+    del splitter
+    print(f'creating triplets = {time.time()-s}')
+    del labeled_pairs
+    del documents
     # Setup run context configuration
     # For single-GPU training (nranks=1), we use avoid_fork_if_possible=True
     # to prevent distributed initialization issues
@@ -155,11 +201,13 @@ def train():
         #     print(f"INIT DEBUG: Verified tracker is set in Run()")
         # else:
         #     print(f"INIT DEBUG: ERROR - tracker not set in Run()")
+
+
         
         # ColBERT configuration
         config = ColBERTConfig(
-            bsize=32*nranks,  # Small batch size for testing
-            accumsteps=1,
+            bsize=64*nranks,  # Small batch size for testing
+            accumsteps=2,
             lr=5e-6,
             nway=2,  # Binary pairs for simplicity  
             query_maxlen=128,  
@@ -167,9 +215,12 @@ def train():
             dim=128,
             similarity="cosine",
             use_ib_negatives=False,
-            maxsteps=10,  # Limit training steps
-            warmup=10,
-            nranks=nranks
+            maxsteps=10000,  # Limit training steps
+            warmup=1000,
+            nranks=nranks,
+            val_check_interval=400,
+            val_ema_alpha=0.9
+
         )
         
         # Make sure to pass the RunConfig settings to the ColBERTConfig
@@ -186,7 +237,9 @@ def train():
         triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
         queries = str(data_dir / "train" / "queries.train.colbert.tsv")
         collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
-        
+        val_triples = str(data_dir / "val" / "triples.train.colbert.jsonl")
+        val_queries = str(data_dir / "val" / "queries.train.colbert.tsv")
+        val_collection = str(data_dir / "val" / "corpus.train.colbert.tsv")
         # Initialize trainer and run training
         print("Starting training...")
         
@@ -196,7 +249,7 @@ def train():
                         'enable_tensorboard':True,
                         'rank':0}
         
-        trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,tracker_config=tracker_config)
+        trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,tracker_config=tracker_config,val_triples=val_triples,val_queries=val_queries,val_collection=val_collection)
         trainer.train(checkpoint='bert-base-uncased')
         
         # Get the path to the best checkpoint
@@ -209,4 +262,6 @@ def train():
     print(f"Done! in {time.time()-s}")
 
 if __name__ == "__main__":
-    train() 
+    labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
+    collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
+    train(labeled_pairs_path,collections_path)

@@ -32,7 +32,8 @@ class TripletGenerator:
         self.aspect_delimiter = aspect_delimiter
         self.pos_neg_ratio = pos_neg_ratio
         self.debug = debug
-        
+        if self.negative_miner is not None:
+            self.negative_miner.build_index(collection)
         # Default sampling weights if none provided
         self.negative_sampling_weights = negative_sampling_weights or {
             "rule_based": 0.5, 
@@ -477,7 +478,9 @@ class TripletDatasetSplitter:
         negative_miner = None,
         aspect_delimiter: str = "||",
         train_val_test_ratio: Tuple[float, float, float] = (0.7, 0.1, 0.2),  # Default split ratio
-        pos_neg_ratio: float = 1.0,
+        train_pos_neg_ratio: float = 64.0,
+        val_pos_neg_ratio:float =2.0,
+        test_pos_neg_ratio:float=12.0,
         seed: int = 42,
         debug: bool = False
     ):
@@ -486,7 +489,9 @@ class TripletDatasetSplitter:
         self.negative_miner = negative_miner
         self.aspect_delimiter = aspect_delimiter
         self.train_val_test_ratio = train_val_test_ratio
-        self.pos_neg_ratio = pos_neg_ratio
+        self.train_pos_neg_ratio = train_pos_neg_ratio
+        self.val_pos_neg_ratio = val_pos_neg_ratio
+        self.test_pos_neg_ratio = test_pos_neg_ratio
         self.seed = seed
         self.debug = debug
         
@@ -654,9 +659,9 @@ class TripletDatasetSplitter:
         return self.train_pairs, self.val_pairs, self.test_pairs
     
     def process_data(self, output_dir, max_triplets_per_query=20, max_positives=None,
-                     train_negative_sampling_weights={"rule_based": 0.4, "random": 0.4, "miner": 0.2},
-                     val_negative_sampling_weights={"rule_based": 0.33, "random": 0.34, "miner": 0.33},
-                     test_negative_sampling_weights={"rule_based": 0.5, "random": 0.5, "miner": 0.0},
+                     train_negative_sampling_weights={"rule_based": 0.05, "random": 0.4, "miner": 0.55},
+                     val_negative_sampling_weights={"rule_based": 0.05, "random": 0.4, "miner": 0.55},
+                     test_negative_sampling_weights={"rule_based": 0.05, "random": 0.4, "miner": 0.55},
                      include_specialized_test_sets=True):
         """
         Process the data into triplets for each split.
@@ -691,7 +696,7 @@ class TripletDatasetSplitter:
             collection=[doc for doc in self.collection if doc in self.train_documents],
             negative_miner=self.negative_miner,
             aspect_delimiter=self.aspect_delimiter,
-            pos_neg_ratio=self.pos_neg_ratio,
+            pos_neg_ratio=self.train_pos_neg_ratio,
             negative_sampling_weights=train_negative_sampling_weights,
             seed=self.seed,
             debug=self.debug
@@ -712,7 +717,7 @@ class TripletDatasetSplitter:
             collection=[doc for doc in self.collection if doc in self.val_documents],
             negative_miner=self.negative_miner,
             aspect_delimiter=self.aspect_delimiter,
-            pos_neg_ratio=self.pos_neg_ratio,
+            pos_neg_ratio=self.val_pos_neg_ratio,
             negative_sampling_weights=val_negative_sampling_weights,
             seed=self.seed,
             debug=self.debug
@@ -733,7 +738,7 @@ class TripletDatasetSplitter:
             collection=[doc for doc in self.collection if doc in self.test_documents],
             negative_miner=self.negative_miner,
             aspect_delimiter=self.aspect_delimiter,
-            pos_neg_ratio=self.pos_neg_ratio,
+            pos_neg_ratio=self.test_pos_neg_ratio,
             negative_sampling_weights=test_negative_sampling_weights,
             seed=self.seed,
             debug=self.debug
@@ -756,7 +761,7 @@ class TripletDatasetSplitter:
                 collection=[doc for doc in self.collection if doc in self.test_documents],
                 negative_miner=self.negative_miner,
                 aspect_delimiter=self.aspect_delimiter,
-                pos_neg_ratio=self.pos_neg_ratio,
+                pos_neg_ratio=self.test_pos_neg_ratio,
                 negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0.0},
                 seed=self.seed,
                 debug=self.debug
