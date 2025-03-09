@@ -24,7 +24,8 @@ class TripletGenerator:
         pos_neg_ratio: float = 1.0,  # 1:1 ratio by default
         negative_sampling_weights: Dict[str, float] = None,  # Weights for each strategy
         seed: int = 42,
-        debug: bool = False
+        debug: bool = False,
+        query_transformer = None  # Add query transformer function
     ):
         self.labeled_pairs = labeled_pairs
         self.collection = collection
@@ -32,6 +33,7 @@ class TripletGenerator:
         self.aspect_delimiter = aspect_delimiter
         self.pos_neg_ratio = pos_neg_ratio
         self.debug = debug
+        self.query_transformer = query_transformer  # Store the transformer function
         if self.negative_miner is not None:
             self.negative_miner.build_index(collection)
         # Default sampling weights if none provided
@@ -439,11 +441,22 @@ class TripletGenerator:
         path = Path(path)
         os.makedirs(path, exist_ok=True)
         
-        # Export queries
+        # Export transformed queries
         with open(path / "queries.train.colbert.tsv", "w") as f:
             for query, idx in self.query_map.items():
-                query = query.replace("\t", " ").replace("\n", " ")
-                f.write(f"{idx}\t{query}\n")
+                # Apply transformation if available
+                transformed_query = query
+                if self.query_transformer is not None:
+                    transformed_query = self.query_transformer(query)
+                
+                transformed_query = transformed_query.replace("\t", " ").replace("\n", " ")
+                f.write(f"{idx}\t{transformed_query}\n")
+        
+        # Export raw queries (new)
+        with open(path / "queries.train.raw.tsv", "w") as f:
+            for query, idx in self.query_map.items():
+                clean_query = query.replace("\t", " ").replace("\n", " ")
+                f.write(f"{idx}\t{clean_query}\n")
         
         # Export collection
         with open(path / "corpus.train.colbert.tsv", "w") as f:
