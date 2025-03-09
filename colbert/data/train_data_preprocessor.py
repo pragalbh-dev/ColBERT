@@ -783,7 +783,7 @@ class TripletDatasetSplitter:
                     collection=[doc for doc in self.collection if doc in self.test_documents],
                     negative_miner=self.negative_miner,
                     aspect_delimiter=self.aspect_delimiter,
-                    pos_neg_ratio=self.pos_neg_ratio,
+                    pos_neg_ratio=self.test_pos_neg_ratio,
                     negative_sampling_weights={"rule_based": 0.0, "random": 0.0, "miner": 1.0},
                     seed=self.seed,
                     debug=self.debug
