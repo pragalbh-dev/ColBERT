@@ -5,6 +5,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import List, Dict, Set, Tuple, Union, Optional, Literal
 import srsly
+def query_transformer(query: str) -> str:
+    """
+    Transform the query by removing the aspect part.
+    """
+
+    return query.replace("||", " - ")
 
 class TripletGenerator:
     """
@@ -25,8 +31,9 @@ class TripletGenerator:
         negative_sampling_weights: Dict[str, float] = None,  # Weights for each strategy
         seed: int = 42,
         debug: bool = False,
-        query_transformer = None  # Add query transformer function
+        query_transformer = query_transformer  # Add query transformer function
     ):
+        
         self.labeled_pairs = labeled_pairs
         self.collection = collection
         self.negative_miner = negative_miner
@@ -476,6 +483,7 @@ class TripletGenerator:
         return path
 
 
+
 class TripletDatasetSplitter:
     """
     Splits datasets into train/val/test sets and generates triplets for each split.
@@ -712,7 +720,8 @@ class TripletDatasetSplitter:
             pos_neg_ratio=self.train_pos_neg_ratio,
             negative_sampling_weights=train_negative_sampling_weights,
             seed=self.seed,
-            debug=self.debug
+            debug=self.debug,
+            query_transformer=query_transformer
         )
         results["train"] = train_generator.generate_triplets(
             max_triplets_per_query=max_triplets_per_query,
@@ -733,7 +742,8 @@ class TripletDatasetSplitter:
             pos_neg_ratio=self.val_pos_neg_ratio,
             negative_sampling_weights=val_negative_sampling_weights,
             seed=self.seed,
-            debug=self.debug
+            debug=self.debug,
+            query_transformer=query_transformer
         )
         results["val"] = val_generator.generate_triplets(
             max_triplets_per_query=max_triplets_per_query,
@@ -754,7 +764,8 @@ class TripletDatasetSplitter:
             pos_neg_ratio=self.test_pos_neg_ratio,
             negative_sampling_weights=test_negative_sampling_weights,
             seed=self.seed,
-            debug=self.debug
+            debug=self.debug,
+            query_transformer=query_transformer
         )
         results["test"] = test_generator.generate_triplets(
             max_triplets_per_query=max_triplets_per_query,
@@ -777,7 +788,8 @@ class TripletDatasetSplitter:
                 pos_neg_ratio=self.test_pos_neg_ratio,
                 negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0.0},
                 seed=self.seed,
-                debug=self.debug
+                debug=self.debug,
+                query_transformer=query_transformer
             )
             results["test_rule_based"] = rule_test_generator.generate_triplets(
                 max_triplets_per_query=max_triplets_per_query,
@@ -799,7 +811,8 @@ class TripletDatasetSplitter:
                     pos_neg_ratio=self.test_pos_neg_ratio,
                     negative_sampling_weights={"rule_based": 0.0, "random": 0.0, "miner": 1.0},
                     seed=self.seed,
-                    debug=self.debug
+                    debug=self.debug,
+                    query_transformer=query_transformer
                 )
                 results["test_miner"] = miner_test_generator.generate_triplets(
                     max_triplets_per_query=max_triplets_per_query,
