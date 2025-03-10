@@ -156,6 +156,9 @@ class TrainingSettings:
 
     model_name: str = DefaultVal(None)  # DefaultVal('bert-base-uncased')
 
+    val_check_interval: int = DefaultVal(10)
+    val_ema_alpha: float = DefaultVal(0.9)
+
 
 @dataclass
 class IndexingSettings:

@@ -80,7 +80,7 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
     print(f"Collection has {len(documents)} documents")
     return labeled_pairs, documents
 
-def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
+def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False):
     nranks=4
 
     avoid_fork_if_possible=False
@@ -111,7 +111,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
     else:
         print("loading dataset...")
         labeled_pairs, documents=load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||')
-        
+
     print(f'time for loading = {time.time()-s}')
     s=time.time()
     # 3. Split the dataset
@@ -123,10 +123,10 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
         collection=documents,
         negative_miner=negative_miner,  # No need for a miner in this example
         aspect_delimiter="||",
-        train_val_test_ratio=(0.85, 0.02, 0.13),
+        train_val_test_ratio=(0.85, 0.05, 0.1),
         train_pos_neg_ratio=64.0,
         val_pos_neg_ratio=4.0,
-        test_pos_neg_ratio=12.0,
+        test_pos_neg_ratio=8.0,
         seed=42,
         debug=False
     )
@@ -142,7 +142,9 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
             datasets = splitter.process_data(
             output_dir=data_dir,
             max_triplets_per_query=10000,  # Increased from 10
-            max_positives=100  # Increased from 2
+            train_max_positives=100,  # Increased from 2
+            test_max_positives=50,
+            val_max_positives=10
             )
         
             with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
@@ -151,16 +153,22 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
         datasets = splitter.process_data(
             output_dir=data_dir,
             max_triplets_per_query=10000,  # Increased from 10
-            max_positives=100  # Increased from 2
+            train_max_positives=100,  # Increased from 2
+            test_max_positives=50,
+            val_max_positives=10
         )
     
         with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
             pickle.dump(datasets,f)
+
+    print()
+    negative_miner.free_gpu_memory()
     del negative_miner
     del splitter
     print(f'creating triplets = {time.time()-s}')
     del labeled_pairs
     del documents
+    del datasets
     # Setup run context configuration
     # For single-GPU training (nranks=1), we use avoid_fork_if_possible=True
     # to prevent distributed initialization issues
@@ -218,7 +226,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=True):
             maxsteps=10000,  # Limit training steps
             warmup=1000,
             nranks=nranks,
-            val_check_interval=400,
+            val_check_interval=500,
             val_ema_alpha=0.9
 
         )
@@ -265,3 +273,4 @@ if __name__ == "__main__":
     labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
     collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
     train(labeled_pairs_path,collections_path)
+    # train()
