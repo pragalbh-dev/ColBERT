@@ -13,6 +13,7 @@ from colbert.infra.config import ColBERTConfig, RunConfig
 from colbert.trainer import SingleGPUTrainer as Trainer
 from colbert.utils.tracker import ColBERTTracker
 from colbert.negative_miners.simple_miner import SimpleMiner
+import os
 
 def load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||'):
     labeled_pairs=pd.read_pickle(labeled_pairs_path)
@@ -79,7 +80,7 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
     print(f"Collection has {len(documents)} documents")
     return labeled_pairs, documents
 
-def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False):
+def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,triples_path=None, queries_path=None,collections_path=None):
     nranks=1
 
     avoid_fork_if_possible=False
@@ -103,74 +104,79 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False):
     os.makedirs(data_dir, exist_ok=True)
     
     # 2. Create a sample dataset
-    s=time.time()
-    if labelled_pairs_path is None:
-        print("Creating sample dataset...")
-        labeled_pairs, documents = create_sample_dataset(num_queries=20, num_docs=200,multiplier=None)
-    else:
-        print("loading dataset...")
-        labeled_pairs, documents=load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||')
-
-    print(f'time for loading = {time.time()-s}')
-    s=time.time()
-    # 3. Split the dataset
-    print("Splitting dataset...")
-    negative_miner=SimpleMiner(language_code='other')
+    if triples_path is None:
+        s=time.time()
+        if labelled_pairs_path is None:
+            print("Creating sample dataset...")
+            labeled_pairs, documents = create_sample_dataset(num_queries=20, num_docs=200,multiplier=None)
+        else:
+            print("loading dataset...")
+            labeled_pairs, documents=load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||')
     
-    splitter = TripletDatasetSplitter(
-        labeled_pairs=labeled_pairs,
-        collection=documents,
-        negative_miner=negative_miner,  # No need for a miner in this example
-        aspect_delimiter="||",
-        train_val_test_ratio=(0.6, 0.1, 0.3),
-        train_pos_neg_ratio=12.0,
-        val_pos_neg_ratio=12.0,
-        test_pos_neg_ratio=8.0,
-        seed=42,
-        debug=False
-    )
-    
-    print(f'time for splitting = {time.time()-s}')
-    # Split and process the dataset
-    s=time.time()
-    if os.path.exists('/home/ec2-user/SageMaker/data/triplets.pkl') and load_from_disk:
-        try:
-            datasets=pd.read_pickle('/home/ec2-user/SageMaker/data/triplets.pkl')
-        except Exception as e:
-            print(f'cannot read: {e}')
+        print(f'time for loading = {time.time()-s}')
+        s=time.time()
+        # 3. Split the dataset
+        print("Splitting dataset...")
+        negative_miner=SimpleMiner(language_code='other')
+        
+        splitter = TripletDatasetSplitter(
+            labeled_pairs=labeled_pairs,
+            collection=documents,
+            negative_miner=negative_miner,  # No need for a miner in this example
+            aspect_delimiter="||",
+            train_val_test_ratio=(0.6, 0.1, 0.3),
+            train_pos_neg_ratio=12.0,
+            val_pos_neg_ratio=12.0,
+            test_pos_neg_ratio=8.0,
+            seed=42,
+            debug=False
+        )
+        
+        print(f'time for splitting = {time.time()-s}')
+        # Split and process the dataset
+        s=time.time()
+        if os.path.exists('/home/ec2-user/SageMaker/data/triplets.pkl') and load_from_disk:
+            try:
+                datasets=pd.read_pickle('/home/ec2-user/SageMaker/data/triplets.pkl')
+            except Exception as e:
+                print(f'cannot read: {e}')
+                datasets = splitter.process_data(
+                output_dir=data_dir,
+                max_triplets_per_query=10000,  # Increased from 10
+                train_max_positives=100,  # Increased from 2
+                test_max_positives=50,
+                val_max_positives=2
+                )
+            
+                with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
+                    pickle.dump(datasets,f)
+        else:
             datasets = splitter.process_data(
-            output_dir=data_dir,
-            max_triplets_per_query=10000,  # Increased from 10
-            train_max_positives=100,  # Increased from 2
-            test_max_positives=50,
-            val_max_positives=2
+                output_dir=data_dir,
+                max_triplets_per_query=10000,  # Increased from 10
+                train_max_positives=100,  # Increased from 2
+                test_max_positives=50,
+                val_max_positives=2
             )
         
-            with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
+            with open('./data/triplets.pkl','wb') as f:
                 pickle.dump(datasets,f)
-    else:
-        datasets = splitter.process_data(
-            output_dir=data_dir,
-            max_triplets_per_query=10000,  # Increased from 10
-            train_max_positives=100,  # Increased from 2
-            test_max_positives=50,
-            val_max_positives=2
-        )
     
-        with open('./data/triplets.pkl','wb') as f:
-            pickle.dump(datasets,f)
+        print()
+        negative_miner.free_gpu_memory()
+        del negative_miner
+        del splitter
+        print(f'creating triplets = {time.time()-s}')
+        del labeled_pairs
+        del documents
+        del datasets
 
-    print()
-    negative_miner.free_gpu_memory()
-    del negative_miner
-    del splitter
-    print(f'creating triplets = {time.time()-s}')
-    del labeled_pairs
-    del documents
-    del datasets
+        
     # Setup run context configuration
     # For single-GPU training (nranks=1), we use avoid_fork_if_possible=True
     # to prevent distributed initialization issues
+
+        
     run_config = RunConfig(
         nranks=nranks,  # For single machine training
         amp=True,  # Mixed precision
@@ -188,29 +194,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False):
     s=time.time()
     # Use the Run context for training
     with Run().context(run_config):
-        # # Set the tracker in the Run context
-        # if Run().rank==0 and hasattr(Run(), 'tracker') and Run().tracker is None:
-        #     tracker = ColBERTTracker(
-        #                 experiment_name=experiment_name,
-        #                 run_name=run_name,
-        #                 log_dir=str(experiment_dir / "logs"),
-        #                 enable_tensorboard=True,
-        #                 rank=Run().rank
-        #             )
-            
-            # # Add debug print to verify tracker initialization
-            # print(f"INIT DEBUG: Created tracker with log_dir={str(experiment_dir / 'logs')}")
-            # print(f"INIT DEBUG: TensorBoard dir={tracker.tensorboard_dir}")
-            # Run().set_tracker(tracker)
-        
-        # # Add debug print to verify tracker is set in Run()
-        # if hasattr(Run(), 'tracker'):
-        #     print(f"INIT DEBUG: Verified tracker is set in Run()")
-        # else:
-        #     print(f"INIT DEBUG: ERROR - tracker not set in Run()")
 
-
-        
         # ColBERT configuration
         config = ColBERTConfig(
             bsize=12*nranks,  # Small batch size for testing
@@ -241,6 +225,18 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False):
         #     print(Run().tracker)
         
         # Setup paths to training data
+        if triples_path is not None:
+            print(f'triples path provided {triples_path} loading data')
+            
+            os.system(f'cp {triples_path["train"]} {str(data_dir / "train" / "triples.train.colbert.jsonl")}')
+            os.system(f'cp {queries_path["train"]} {str(data_dir / "train" / "queries.train.colbert.jsonl")}')
+            os.system(f'cp {collections_path["train"]} {str(data_dir / "train" / "corpus.train.colbert.jsonl")}')
+            
+            os.system(f'cp {triples_path["val"]} {str(data_dir / "val" / "triples.train.colbert.jsonl")}')
+            os.system(f'cp {queries_path["val"]} {str(data_dir / "val" / "queries.train.colbert.jsonl")}')
+            os.system(f'cp {collections_path["val"]} {str(data_dir / "val" / "corpus.train.colbert.jsonl")}')
+
+            
         triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
         queries = str(data_dir / "train" / "queries.train.colbert.tsv")
         collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
@@ -269,7 +265,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False):
     print(f"Done! in {time.time()-s}")
 
 if __name__ == "__main__":
-    # labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
-    # collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
-    # train(labeled_pairs_path,collections_path)
-    train()
+    labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
+    collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
+    train(labeled_pairs_path,collections_path)
+    # train()
