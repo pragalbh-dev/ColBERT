@@ -50,7 +50,12 @@ def validate(colbert, val_reader, config, step_idx):
         # Match the training loop's iteration pattern
         # for batch_idx, BatchSteps in zip(range(start_batch_idx, config.maxsteps), val_reader):
         i=0
-        for BatchSteps in val_reader:
+        for BatchSteps in val_reader: 
+            ### FIXME: this is a hack to stop the validation loop from running forever. we need to reiterate over the same dataset every validatrion run, 
+            ### but in one validation run, we want to iterate ove the entire dataset . hence shuffle=false makes it possible to have only 1 validation run whule 
+            # ### shuffle =True makes one run run for inf steps
+            if i>len(val_reader)//val_reader.bsize:
+                break
             print("batch steps")
             # Now iterate over each batch in BatchSteps
             for val_batch in BatchSteps:
@@ -101,7 +106,7 @@ def validate(colbert, val_reader, config, step_idx):
     
     # Apply exponential moving average (EMA) smoothing to validation loss
     # Default smoothing factor if not specified
-    val_ema_alpha = 0.8 if not hasattr(config, 'val_ema_alpha') else config.val_ema_alpha
+    val_ema_alpha = 0.95 if not hasattr(config, 'val_ema_alpha') else config.val_ema_alpha
     
     # Initialize smoothed loss on first validation or update existing
     if not hasattr(config, 'smoothed_val_loss'):
@@ -145,8 +150,8 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None,val_trip
         if config.reranker:
             reader = RerankBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks)
         else:
-            reader = LazyBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks,shuffle=True)
-            val_reader = LazyBatcher(config, val_triples, val_queries, val_collection, (0 if config.rank == -1 else config.rank), config.nranks,shuffle=False)
+            reader = LazyBatcher(config, triples, queries, collection, (0 if config.rank == -1 else config.rank), config.nranks,shuffle=False)
+            val_reader = LazyBatcher(config, val_triples, val_queries, val_collection, (0 if config.rank == -1 else config.rank), config.nranks,shuffle=True)
     else:
         raise NotImplementedError()
 
@@ -182,7 +187,7 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None,val_trip
 
     start_time = time.time()
     train_loss = None
-    train_loss_mu = 0.999
+    train_loss_mu = 0.95
 
     start_batch_idx = 0
     
@@ -253,7 +258,8 @@ def train(config: ColBERTConfig, triples, queries=None, collection=None,val_trip
         if Run().rank == 0:
             print_message(batch_idx, train_loss)
             # Add tracking of training loss
-            Run().log_metric('train/loss', train_loss, step=batch_idx)
+            Run().log_metric('train/loss_mav', train_loss, step=batch_idx)
+            Run().log_metric('train/loss_this_batch', this_batch_loss, step=batch_idx)
         
         # Run validation at regular intervals
         if val_triples is not None and (batch_idx + 1) % val_check_interval == 0:
