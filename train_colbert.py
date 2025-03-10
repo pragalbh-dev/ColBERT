@@ -265,7 +265,18 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,tr
     print(f"Done! in {time.time()-s}")
 
 if __name__ == "__main__":
-    labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
-    collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
-    train(labeled_pairs_path,collections_path)
+    # labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
+    # collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
+    
+    triples_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/triples.train.colbert.oversampled.jsonl',
+                 
+                 'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/triples.train.colbert.jsonl'}
+    collections_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/corpus.train.colbert.tsv',
+                     'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/corpus.train.colbert.tsv'}
+    
+    queries_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/queries.train.colbert.tsv',
+                  'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/queries.train.colbert.tsv'}
+
+    train(triples_path, queries_path, collections_path)
+    # train(labeled_pairs_path,collections_path)
     # train()

@@ -13,11 +13,11 @@ from colbert.infra.config import ColBERTConfig, RunConfig
 from colbert.trainer import SingleGPUTrainer as Trainer
 from colbert.utils.tracker import ColBERTTracker
 from colbert.negative_miners.simple_miner import SimpleMiner
+import os
 
 def load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||'):
     labeled_pairs=pd.read_pickle(labeled_pairs_path)
     collections=pd.read_csv(collections_path,sep='\t')
-    aspect_delimiter
     labeled_pairs['made_up_query']=labeled_pairs.apply(lambda x:f'{x.aspect}{aspect_delimiter}{x.actual_query}',axis=1)
     
     labeled_pairs=list(zip(labeled_pairs.made_up_query.to_list(),labeled_pairs.collection.to_list(),labeled_pairs.label.to_list()))
@@ -80,10 +80,8 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
     print(f"Collection has {len(documents)} documents")
     return labeled_pairs, documents
 
-def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, triples_path=None,
-          queries_path=None,collection_path=None):
-    
-    nranks=4
+def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,triples_path=None, queries_path=None,collections_path=None):
+    nranks=1
 
     avoid_fork_if_possible=False
     if nranks<=1:
@@ -106,13 +104,11 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
     os.makedirs(data_dir, exist_ok=True)
     
     # 2. Create a sample dataset
-    s=time.time()
-
     if triples_path is None:
-        print("NO path was passed: creating dataset")
+        s=time.time()
         if labelled_pairs_path is None:
             print("Creating sample dataset...")
-            labeled_pairs, documents = create_sample_dataset(num_queries=20, num_docs=500,multiplier=None)
+            labeled_pairs, documents = create_sample_dataset(num_queries=20, num_docs=200,multiplier=None)
         else:
             print("loading dataset...")
             labeled_pairs, documents=load_real_data(labeled_pairs_path,collections_path,aspect_delimiter='||')
@@ -128,9 +124,9 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
             collection=documents,
             negative_miner=negative_miner,  # No need for a miner in this example
             aspect_delimiter="||",
-            train_val_test_ratio=(0.85, 0.05, 0.1),
-            train_pos_neg_ratio=64.0,
-            val_pos_neg_ratio=4.0,
+            train_val_test_ratio=(0.6, 0.1, 0.3),
+            train_pos_neg_ratio=12.0,
+            val_pos_neg_ratio=12.0,
             test_pos_neg_ratio=8.0,
             seed=42,
             debug=False
@@ -149,7 +145,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
                 max_triplets_per_query=10000,  # Increased from 10
                 train_max_positives=100,  # Increased from 2
                 test_max_positives=50,
-                val_max_positives=10
+                val_max_positives=2
                 )
             
                 with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
@@ -160,10 +156,10 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
                 max_triplets_per_query=10000,  # Increased from 10
                 train_max_positives=100,  # Increased from 2
                 test_max_positives=50,
-                val_max_positives=10
+                val_max_positives=2
             )
         
-            with open('/home/ec2-user/SageMaker/data/triplets.pkl','wb') as f:
+            with open('./data/triplets.pkl','wb') as f:
                 pickle.dump(datasets,f)
     
         print()
@@ -179,6 +175,8 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
     # Setup run context configuration
     # For single-GPU training (nranks=1), we use avoid_fork_if_possible=True
     # to prevent distributed initialization issues
+
+        
     run_config = RunConfig(
         nranks=nranks,  # For single machine training
         amp=True,  # Mixed precision
@@ -196,11 +194,11 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
     s=time.time()
     # Use the Run context for training
     with Run().context(run_config):
-        
+
         # ColBERT configuration
         config = ColBERTConfig(
-            bsize=64*nranks,  # Small batch size for testing
-            accumsteps=2,
+            bsize=12*nranks,  # Small batch size for testing
+            accumsteps=1,
             lr=5e-6,
             nway=2,  # Binary pairs for simplicity  
             query_maxlen=128,  
@@ -211,7 +209,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
             maxsteps=10000,  # Limit training steps
             warmup=1000,
             nranks=nranks,
-            val_check_interval=500,
+            val_check_interval=10,
             val_ema_alpha=0.95,
             attend_to_mask_tokens=True
         )
@@ -219,27 +217,33 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
         # Make sure to pass the RunConfig settings to the ColBERTConfig
         if nranks<=1:
             config.rank = 0
-
+        # config.nranks = 1
+        # config.avoid_fork_if_possible = True
+        
+        # # Log the configuration
+        # if Run().rank==0:
+        #     print(Run().tracker)
+        
         # Setup paths to training data
-
         if triples_path is not None:
-            print(f"reading dataset from the provided path : {triples_path}")
+            print(f'triples path provided {triples_path} loading data')
             
             os.system(f'cp {triples_path["train"]} {str(data_dir / "train" / "triples.train.colbert.jsonl")}')
-            os.system(f'cp {queries_path["train"]} {str(data_dir / "train" / "queries.train.colbert.tsv")}')
-            os.system(f'cp {collection_path["train"]} {str(data_dir / "train" / "corpus.train.colbert.tsv")}')
-            ## val set copy
-            os.system(f'cp {triples_path["val"]} {str(data_dir / "val" / "triples.train.colbert.tsv")}')
-            os.system(f'cp {queries_path["val"]} {str(data_dir / "val" / "queries.train.colbert.tsv")}')
-            os.system(f'cp {collection_path["val"]} {str(data_dir / "val" / "corpus.train.colbert.tsv")}')
-        else:
-            triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
-            queries = str(data_dir / "train" / "queries.train.colbert.tsv")
-            collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
-            val_triples = str(data_dir / "val" / "triples.train.colbert.jsonl")
-            val_queries = str(data_dir / "val" / "queries.train.colbert.tsv")
-            val_collection = str(data_dir / "val" / "corpus.train.colbert.tsv")
-# Initialize trainer and run training
+            os.system(f'cp {queries_path["train"]} {str(data_dir / "train" / "queries.train.colbert.jsonl")}')
+            os.system(f'cp {collections_path["train"]} {str(data_dir / "train" / "corpus.train.colbert.jsonl")}')
+            
+            os.system(f'cp {triples_path["val"]} {str(data_dir / "val" / "triples.train.colbert.jsonl")}')
+            os.system(f'cp {queries_path["val"]} {str(data_dir / "val" / "queries.train.colbert.jsonl")}')
+            os.system(f'cp {collections_path["val"]} {str(data_dir / "val" / "corpus.train.colbert.jsonl")}')
+
+            
+        triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
+        queries = str(data_dir / "train" / "queries.train.colbert.tsv")
+        collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
+        val_triples = str(data_dir / "val" / "triples.train.colbert.jsonl")
+        val_queries = str(data_dir / "val" / "queries.train.colbert.tsv")
+        val_collection = str(data_dir / "val" / "corpus.train.colbert.tsv")
+        # Initialize trainer and run training
         print("Starting training...")
         
         tracker_config={'experiment_name':experiment_name,
@@ -261,7 +265,18 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False, t
     print(f"Done! in {time.time()-s}")
 
 if __name__ == "__main__":
-    labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
-    collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
-    train(labeled_pairs_path,collections_path)
+    # labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
+    # collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
+    
+    triples_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/triples.train.colbert.oversampled.jsonl',
+                 
+                 'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/triples.train.colbert.jsonl'}
+    collections_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/corpus.train.colbert.tsv',
+                     'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/corpus.train.colbert.tsv'}
+    
+    queries_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/queries.train.colbert.tsv',
+                  'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/queries.train.colbert.tsv'}
+
+    train(triples_path, queries_path, collections_path)
+    # train(labeled_pairs_path,collections_path)
     # train()
