@@ -33,6 +33,7 @@ class Launcher:
         rng = random.Random(time.time())
         port = str(12355 + rng.randint(0, 1000))  # randomize the port to avoid collision on launching several jobs.
         all_procs = []
+        ## FIXME: needed one gpu to be free
         for new_rank in range(0, self.nranks):
             new_config = type(custom_config).from_existing(custom_config, self.run_config, RunConfig(rank=new_rank))
             
@@ -137,9 +138,10 @@ def setup_new_process(callee, port, return_value_queue, config,tracker_config, *
 
     with Run().context(config, inherit_config=False):
         if config.rank==0:
-            tracker=ColBERTTracker(**tracker_config)
-            Run().set_tracker(tracker)
-            Run().tracker.log_config(config.export())
+            if tracker_config is not None:
+                tracker=ColBERTTracker(**tracker_config)
+                Run().set_tracker(tracker)
+                Run().tracker.log_config(config.export())
         return_val = callee(config, *args)
 
     return_value_queue.put((rank, return_val))
