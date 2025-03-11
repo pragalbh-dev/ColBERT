@@ -1,4 +1,4 @@
-## optimized to handle batch evaluation
+### pre optimization
 import os
 import torch
 import numpy as np
@@ -185,104 +185,66 @@ class ColBERTEvaluator:
         rankings = {}
         queries_with_relevance = 0  # Count queries that have relevant documents
         
-        # Filter out queries with no relevant documents
-        filtered_queries = {}
-        for qid, query in queries.items():
+        for query_idx, (qid, query) in enumerate(queries.items()):
+            # Skip queries without relevant documents
             gold_positives = qrels.get(qid, [])
-            if gold_positives:
-                filtered_queries[qid] = query
-                queries_with_relevance += 1
-            else:
-                print_message(f"#> Skipping query {qid} (no relevant documents)")
-        
-        print_message(f"#> Processing {len(filtered_queries)} queries with relevant documents")
-        
-        # Process queries in batches
-        query_batches = []
-        qids_list = []
-        for i in range(0, len(filtered_queries), batch_size):
-            batch_qids = list(filtered_queries.keys())[i:i+batch_size]
-            batch_queries = [filtered_queries[qid] for qid in batch_qids]
-            query_batches.append(batch_queries)
-            qids_list.append(batch_qids)
-        
-        # Pre-process all documents in batches
-        print_message(f"#> Processing {len(collection)} documents in batches of {batch_size}")
-        all_doc_encodings = []
-        all_doc_masks = []
-        
-        # Process documents in batches to avoid memory issues
-        for batch_idx in range(0, len(collection), batch_size):
-            print_message(f"#> Processing document batch {batch_idx//batch_size + 1}/{len(collection)//batch_size + 1}")
-            batch_docs = collection[batch_idx:batch_idx + batch_size]
+            if not gold_positives:
+                print_message(f"#> Skipping query {query_idx+1} / {len(queries)} (no relevant documents)")
+                continue
+                
+            print_message(f"#> Processing query {query_idx+1} / {len(queries)}")
+            queries_with_relevance += 1
             
+            # Process query in batches
             with torch.no_grad():
-                # Tokenize documents
-                D_tokens, D_mask = self.doc_tokenizer.tensorize(batch_docs)
-                D_tokens, D_mask = D_tokens.to('cuda:0'), D_mask.to('cuda:0')
+                # Tokenize query
+                Q_tokens, Q_mask = self.query_tokenizer.tensorize([query])
+                Q_tokens, Q_mask = Q_tokens.to(DEVICE), Q_mask.to(DEVICE)
                 
-                # Process documents - use model's doc method with batching
-                D_encodings, D_enc_mask = self.model.doc(D_tokens, D_mask, keep_dims='return_mask')
-                
-                # Move to CPU to save GPU memory
-                if len(collection) > batch_size * 10:  # Only if collection is large
-                    D_encodings = D_encodings.cpu()
-                    D_enc_mask = D_enc_mask.cpu()
-                
-                all_doc_encodings.append(D_encodings)
-                all_doc_masks.append(D_enc_mask)
-        
-        # Process each query batch
-        for batch_idx, (batch_queries, batch_qids) in enumerate(zip(query_batches, qids_list)):
-            print_message(f"#> Processing query batch {batch_idx+1}/{len(query_batches)}")
-            
-            with torch.no_grad():
-                # Tokenize queries
-                Q_tokens, Q_mask = self.query_tokenizer.tensorize(batch_queries)
-                Q_tokens, Q_mask = Q_tokens.to('cuda:0'), Q_mask.to('cuda:0')
-                
-                # Process queries - get query encodings
+                # Process the query encodings - directly use model's query method
                 Q_encodings = self.model.query(Q_tokens, Q_mask)
                 
-                # Score against all document batches
-                batch_scores = []
-                for doc_idx, (D_encodings, D_enc_mask) in enumerate(zip(all_doc_encodings, all_doc_masks)):
-                    # Move back to GPU if needed
-                    if D_encodings.device.type == 'cpu':
-                        D_encodings = D_encodings.to('cuda:0')
-                        D_enc_mask = D_enc_mask.to('cuda:0')
+                # Process documents in smaller batches to avoid dimension issues
+                all_scores = []
+                for batch_idx in tqdm(range(0, len(collection), batch_size)):
+                    batch_docs = collection[batch_idx:batch_idx + batch_size]
                     
-                    # Score this batch of documents against all queries in the current batch
-                    # The score method can handle multiple queries at once (Q is [batch_size, seq_len, dim])
-                    scores = self.model.score(Q_encodings, D_encodings, D_enc_mask)
-                    batch_scores.append(scores)
+                    # Process each document in the batch individually to maintain correct dimensions
+                    batch_scores = []
+                    for doc in batch_docs:
+                        # Tokenize a single document
+                        D_tokens, D_mask = self.doc_tokenizer.tensorize([doc])
+                        D_tokens, D_mask = D_tokens.to(DEVICE), D_mask.to(DEVICE)
+                        
+                        # Process document
+                        D_encodings, D_enc_mask = self.model.doc(D_tokens, D_mask, keep_dims='return_mask')
+                        
+                        # Score this document against the query
+                        doc_score = self.model.score(Q_encodings, D_encodings, D_enc_mask)
+                        batch_scores.append(doc_score.item())
+                    
+                    # Convert batch scores to tensor
+                    batch_scores_tensor = torch.tensor(batch_scores, device=DEVICE)
+                    all_scores.append(batch_scores_tensor)
                 
-                # Concatenate all document batch scores
-                all_scores = torch.cat(batch_scores, dim=1)  # [batch_queries, all_documents]
+                # Concatenate all scores
+                all_scores = torch.cat(all_scores, dim=0).unsqueeze(0)  # Add batch dimension for consistent handling
                 
-                # Process each query's scores in the batch
-                for q_idx, qid in enumerate(batch_qids):
-                    # Get gold positives for this query
-                    gold_positives = qrels.get(qid, [])
-                    
-                    # Get top 'depth' documents for this query
-                    query_scores = all_scores[q_idx]
-                    top_indices = torch.argsort(query_scores, descending=True)[:depth].tolist()
-                    
-                    # Format ranking as expected by metrics.add: [(score, pid, passage_idx)]
-                    ranking = [(query_scores[idx].item(), idx, idx) for idx in top_indices]
-                    
-                    # Add to metrics
-                    # The query_idx needs to be sequential for metrics tracking
-                    rel_query_idx = list(filtered_queries.keys()).index(qid)
-                    self.metrics.add(rel_query_idx, qid, ranking, gold_positives)
-                    
-                    # Store ranking
-                    rankings[qid] = ranking
-                    
-                    # Calculate precision and NDCG
-                    self._calculate_precision(ranking, gold_positives)
-                    self._calculate_ndcg(ranking, gold_positives)
+                # Get ranking (top 'depth' documents)
+                ranked_indices = torch.argsort(all_scores, dim=1, descending=True)
+                ranked_indices = ranked_indices[0, :depth].tolist()
+                
+                ranking = [(all_scores[0, idx].item(), idx, idx) for idx in ranked_indices]
+                
+                # Add to metrics - Use a consecutive index for metrics
+                # This ensures max_query_idx is incremented properly
+                rel_query_idx = queries_with_relevance - 1  # 0-indexed
+                self.metrics.add(rel_query_idx, qid, ranking, gold_positives)
+                rankings[qid] = ranking
+                
+                # Calculate precision and NDCG
+                self._calculate_precision(ranking, gold_positives)
+                self._calculate_ndcg(ranking, gold_positives)
         
         # Save rankings if output_path is provided
         if output_path:
@@ -293,7 +255,7 @@ class ColBERTEvaluator:
         print_message(f"#> Queries with relevant documents: {queries_with_relevance}")
         print_message(f"#> Queries without relevant documents: {len(queries) - queries_with_relevance}")
         
-        # Log metrics
+        # Log metrics with queries_with_relevance instead of total queries
         return self._log_metrics(queries_with_relevance, step)
     
     def _calculate_precision(self, ranking, gold_positives):
