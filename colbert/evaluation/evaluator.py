@@ -252,9 +252,6 @@ class ColBERTEvaluator:
                 # Process query - get query encodings
                 Q_encodings = self.model.query(Q_tokens, Q_mask)
                 
-                # Q_encodings will have shape [1, seq_len, dim]
-                # This satisfies the requirement that Q.size(0) == 1 in colbert_score
-                
                 # Create score tracker for all documents
                 query_doc_scores = []
                 
@@ -267,15 +264,25 @@ class ColBERTEvaluator:
                         D_encodings = D_encodings.to('cuda:0')
                         batch_mask = batch_mask.to('cuda:0')
                     
-                    # Score this batch of documents against the single query
-                    # Q_encodings has shape [1, seq_len, dim], which satisfies colbert_score's requirement
+                    # IMPORTANT: Understanding the model.score return type
+                    # colbert_score returns a scalar value for each document in the batch
+                    # If D_encodings has shape [batch_size, seq_len, dim], then:
+                    # scores will have shape [batch_size], one score per document
                     scores = self.model.score(Q_encodings, D_encodings, batch_mask)
                     
-                    # scores will have shape [1, batch_size]
+                    # Handle different possible return types from model.score
+                    # Ensure scores is a 1D tensor
+                    if isinstance(scores, torch.Tensor):
+                        if scores.dim() == 0:  # scalar tensor
+                            scores = scores.unsqueeze(0)  # convert to 1D tensor with 1 element
+                    else:  # not a tensor
+                        scores = torch.tensor([scores], device='cuda:0')
+                    
                     # Store scores with document indices
-                    for d_idx in range(scores.shape[1]):
+                    # Each document gets one scalar score
+                    for d_idx, score in enumerate(scores):
                         actual_doc_idx = batch_offset + d_idx
-                        query_doc_scores.append((scores[0, d_idx].item(), actual_doc_idx))
+                        query_doc_scores.append((score.item(), actual_doc_idx))
                 
                 # Sort scores and get top 'depth' documents
                 sorted_docs = sorted(query_doc_scores, key=lambda x: x[0], reverse=True)[:depth]
