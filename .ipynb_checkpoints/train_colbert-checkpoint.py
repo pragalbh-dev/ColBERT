@@ -80,8 +80,8 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
     print(f"Collection has {len(documents)} documents")
     return labeled_pairs, documents
 
-def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,triples_path=None, queries_path=None,collections_path=None):
-    nranks=1
+def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,triples_path=None, queries_path=None):
+    nranks=4
 
     avoid_fork_if_possible=False
     if nranks<=1:
@@ -197,8 +197,8 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,tr
 
         # ColBERT configuration
         config = ColBERTConfig(
-            bsize=12*nranks,  # Small batch size for testing
-            accumsteps=1,
+            bsize=64*nranks,  # Small batch size for testing
+            accumsteps=2,
             lr=5e-6,
             nway=2,  # Binary pairs for simplicity  
             query_maxlen=128,  
@@ -207,42 +207,38 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,tr
             similarity="cosine",
             use_ib_negatives=False,
             maxsteps=10000,  # Limit training steps
-            warmup=1000,
+            warmup=250,
             nranks=nranks,
-            val_check_interval=10,
+            val_check_interval=150,
             val_ema_alpha=0.95,
-            attend_to_mask_tokens=True
+            attend_to_mask_tokens=False
         )
         
         # Make sure to pass the RunConfig settings to the ColBERTConfig
         if nranks<=1:
             config.rank = 0
-        # config.nranks = 1
-        # config.avoid_fork_if_possible = True
-        
-        # # Log the configuration
-        # if Run().rank==0:
-        #     print(Run().tracker)
-        
+
         # Setup paths to training data
         if triples_path is not None:
             print(f'triples path provided {triples_path} loading data')
+            data_dirs=[str(data_dir / "train" ),str(data_dir / "val" )]
+            for _data_dir in data_dirs:
+                os.makedirs(_data_dir,exist_ok=True)
+            os.system(f'cp {triples_path["train"]} {os.path.join(data_dir , "train" , "triples.train.colbert.jsonl")}')
+            os.system(f'cp {queries_path["train"]} {os.path.join(data_dir , "train" , "queries.train.colbert.tsv")}')
+            os.system(f'cp {collections_path["train"]} {os.path.join(data_dir , "train" , "corpus.train.colbert.tsv")}')
             
-            os.system(f'cp {triples_path["train"]} {str(data_dir / "train" / "triples.train.colbert.jsonl")}')
-            os.system(f'cp {queries_path["train"]} {str(data_dir / "train" / "queries.train.colbert.jsonl")}')
-            os.system(f'cp {collections_path["train"]} {str(data_dir / "train" / "corpus.train.colbert.jsonl")}')
-            
-            os.system(f'cp {triples_path["val"]} {str(data_dir / "val" / "triples.train.colbert.jsonl")}')
-            os.system(f'cp {queries_path["val"]} {str(data_dir / "val" / "queries.train.colbert.jsonl")}')
-            os.system(f'cp {collections_path["val"]} {str(data_dir / "val" / "corpus.train.colbert.jsonl")}')
+            os.system(f'cp {triples_path["val"]} {os.path.join(data_dir , "val" , "triples.train.colbert.jsonl")}')
+            os.system(f'cp {queries_path["val"]} {os.path.join(data_dir , "val" , "queries.train.colbert.tsv")}')
+            os.system(f'cp {collections_path["val"]} {os.path.join(data_dir , "val" , "corpus.train.colbert.tsv")}')
 
             
-        triples = str(data_dir / "train" / "triples.train.colbert.jsonl")
-        queries = str(data_dir / "train" / "queries.train.colbert.tsv")
-        collection = str(data_dir / "train" / "corpus.train.colbert.tsv")
-        val_triples = str(data_dir / "val" / "triples.train.colbert.jsonl")
-        val_queries = str(data_dir / "val" / "queries.train.colbert.tsv")
-        val_collection = str(data_dir / "val" / "corpus.train.colbert.tsv")
+        triples = os.path.join(data_dir , "train" , "triples.train.colbert.jsonl")
+        queries = os.path.join(data_dir , "train" , "queries.train.colbert.tsv")
+        collection = os.path.join(data_dir , "train" , "corpus.train.colbert.tsv")
+        val_triples = os.path.join(data_dir , "val" , "triples.train.colbert.jsonl")
+        val_queries = os.path.join(data_dir , "val" , "queries.train.colbert.tsv")
+        val_collection = os.path.join(data_dir , "val" , "corpus.train.colbert.tsv")
         # Initialize trainer and run training
         print("Starting training...")
         
@@ -252,7 +248,8 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,tr
                         'enable_tensorboard':True,
                         'rank':0}
         
-        trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,tracker_config=tracker_config,val_triples=val_triples,val_queries=val_queries,val_collection=val_collection)
+        trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,
+                          tracker_config=tracker_config,val_triples=val_triples,val_queries=val_queries,val_collection=val_collection)
         trainer.train(checkpoint='bert-base-uncased')
         
         # Get the path to the best checkpoint
@@ -270,13 +267,15 @@ if __name__ == "__main__":
     
     triples_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/triples.train.colbert.oversampled.jsonl',
                  
-                 'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/triples.train.colbert.jsonl'}
+                 'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/triples.train.colbert.shuffled.jsonl'}
+
+    
     collections_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/corpus.train.colbert.tsv',
                      'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/corpus.train.colbert.tsv'}
     
     queries_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/queries.train.colbert.tsv',
                   'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/queries.train.colbert.tsv'}
 
-    train(triples_path, queries_path, collections_path)
+    train(triples_path=triples_path,queries_path=queries_path,collections_path=collections_path)
     # train(labeled_pairs_path,collections_path)
     # train()
