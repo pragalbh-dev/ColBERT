@@ -82,7 +82,7 @@ def create_sample_dataset(num_queries=50, num_docs=200, aspect_delimiter="||",mu
 
 def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,triples_path=None, queries_path=None):
     try:
-        nranks=4
+        nranks=1
     
         avoid_fork_if_possible=False
         if nranks<=1:
@@ -202,15 +202,16 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,tr
                 accumsteps=2,
                 lr=5e-6,
                 nway=2,  # Binary pairs for simplicity  
-                query_maxlen=128,  
+                # query_maxlen=32,  
+                query_maxlen=32,  
                 doc_maxlen=512,   
                 dim=128,
                 similarity="cosine",
                 use_ib_negatives=False,
                 maxsteps=10000,  # Limit training steps
-                warmup=250,
+                warmup=25,
                 nranks=nranks,
-                val_check_interval=150,
+                val_check_interval=25,
                 val_ema_alpha=0.95,
                 attend_to_mask_tokens=False
             )
@@ -251,7 +252,7 @@ def train(labelled_pairs_path=None,collections_path=None,load_from_disk=False,tr
             
             trainer = Trainer(triples=triples, queries=queries, collection=collection, config=config,
                               tracker_config=tracker_config,val_triples=val_triples,val_queries=val_queries,val_collection=val_collection)
-            trainer.train(checkpoint='bert-base-uncased')
+            trainer.train(checkpoint='colbert-ir/colbertv2.0')
             
             # Get the path to the best checkpoint
             best_checkpoint = trainer.best_checkpoint_path()
@@ -271,16 +272,29 @@ if __name__ == "__main__":
     # labeled_pairs_path='/home/ec2-user/SageMaker/data/labelled_pairs.all.pkl'
     # collections_path='/home/ec2-user/SageMaker/data/collections.all.tsv'
     
-    triples_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/triples.train.colbert.oversampled.jsonl',
+    # triples_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/test/triples.train.colbert.filtered.jsonl',
                  
-                 'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/triples.train.colbert.shuffled.jsonl'}
+    #              'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/triples.train.colbert.shuffled.jsonl'}
 
     
-    collections_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/corpus.train.colbert.tsv',
-                     'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/corpus.train.colbert.tsv'}
+    # collections_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/test/corpus.train.colbert.tsv',
+    #                  'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/corpus.train.colbert.tsv'}
     
-    queries_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/val/queries.train.colbert.tsv',
-                  'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/queries.train.colbert.tsv'}
+    # queries_path={'val':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/test/queries.train.colbert.tsv',
+    #               'train':'/home/ec2-user/SageMaker/ColBERT/experiments/colbert_aspect_training/run_1741558706/data/train/queries.train.colbert.tsv'}
+
+
+
+    triples_path={'val':'/home/ec2-user/SageMaker/synthetic_data/triples.val.jsonl',
+                 
+                 'train':'/home/ec2-user/SageMaker/synthetic_data/triples.train.jsonl'}
+
+    
+    collections_path={'val':'/home/ec2-user/SageMaker/synthetic_data/corpus.val.tsv',
+                     'train':'/home/ec2-user/SageMaker/synthetic_data/corpus.train.tsv'}
+    
+    queries_path={'val':'/home/ec2-user/SageMaker/synthetic_data/queries.val.tsv',
+                  'train':'/home/ec2-user/SageMaker/synthetic_data/queries.train.tsv'}
 
     train(triples_path=triples_path,queries_path=queries_path,collections_path=collections_path)
     # train(labeled_pairs_path,collections_path)

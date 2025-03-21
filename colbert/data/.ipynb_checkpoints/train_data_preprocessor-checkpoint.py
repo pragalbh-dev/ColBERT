@@ -31,7 +31,8 @@ class TripletGenerator:
         negative_sampling_weights: Dict[str, float] = None,  # Weights for each strategy
         seed: int = 42,
         debug: bool = False,
-        query_transformer = query_transformer  # Add query transformer function
+        query_transformer = query_transformer,  # Add query transformer function,
+        rule_based=True
     ):
         
         self.labeled_pairs = labeled_pairs
@@ -70,7 +71,8 @@ class TripletGenerator:
         maps_time = time.time() - maps_start
         
         negatives_start = time.time()
-        self._build_rule_based_negatives()
+        if self.negative_sampling_weights['rule_based']>0:
+            self._build_rule_based_negatives()
         negatives_time = time.time() - negatives_start
         
         # Results
@@ -142,6 +144,8 @@ class TripletGenerator:
         These are passages that are positive for one aspect but negative for another aspect
         of the same base query.
         """
+
+        ## this implementation is flawed since we only pass certain negtives of a query and certain positives of a query : all are not passed to each generator
         rule_based_negatives = {}
         
         # Get base queries (without aspect)
@@ -632,6 +636,7 @@ class TripletDatasetSplitter:
             group_size = len(pairs)
             train_size = int(group_size * train_ratio)
             val_size = int(group_size * val_ratio)
+            test_size=int(group_size * test_ratio)
             
             # Randomly shuffle pairs in the group
             random.shuffle(pairs)
@@ -639,7 +644,7 @@ class TripletDatasetSplitter:
             # Split the group
             train_group = pairs[:train_size]
             val_group = pairs[train_size:train_size + val_size]
-            test_group = pairs[train_size + val_size:]
+            test_group = pairs[train_size + val_size:test_size + train_size + val_size]
             
             # Add to respective splits
             self.train_pairs.extend(train_group)
@@ -680,10 +685,11 @@ class TripletDatasetSplitter:
         return self.train_pairs, self.val_pairs, self.test_pairs
     
     def process_data(self, output_dir, max_triplets_per_query=20, train_max_positives=None,val_max_positives=None,test_max_positives=None,
-                     train_negative_sampling_weights={"rule_based": 0.05, "random": 0.4, "miner": 0.55},
-                     val_negative_sampling_weights={"rule_based": 0.05, "random": 0.4, "miner": 0.55},
-                     test_negative_sampling_weights={"rule_based": 0.05, "random": 0.4, "miner": 0.55},
-                     include_specialized_test_sets=True):
+                     train_negative_sampling_weights={"miner": 0.85,"rule_based": 0.0, "random": 0.15},
+                     val_negative_sampling_weights={"miner": 0.75,"rule_based": 0.0, "random": 0.25},
+                     test_negative_sampling_weights={"miner": 0.75,"rule_based": 0.0, "random": 0.25},
+                     include_specialized_test_sets=False,rule_based=False):
+
         """
         Process the data into triplets for each split.
         
@@ -712,6 +718,8 @@ class TripletDatasetSplitter:
         
         # Process training data
         train_start = time.time()
+        ### since collection array is different entirely for each set: the indices will be different
+        ## TODO: check why is list check is done: why not just pass self.train_documents etc
         train_generator = TripletGenerator(
             labeled_pairs=self.train_pairs,
             collection=[doc for doc in self.collection if doc in self.train_documents],
@@ -779,27 +787,28 @@ class TripletDatasetSplitter:
         # Generate specialized test sets if requested
         if include_specialized_test_sets:
             # Rule-based test set - using the same test data but with only rule-based sampling
-            rule_test_start = time.time()
-            rule_test_generator = TripletGenerator(
-                labeled_pairs=self.test_pairs,
-                collection=[doc for doc in self.collection if doc in self.test_documents],
-                negative_miner=self.negative_miner,
-                aspect_delimiter=self.aspect_delimiter,
-                pos_neg_ratio=self.test_pos_neg_ratio,
-                negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0.0},
-                seed=self.seed,
-                debug=self.debug,
-                query_transformer=query_transformer
-            )
-            results["test_rule_based"] = rule_test_generator.generate_triplets(
-                max_triplets_per_query=max_triplets_per_query,
-                max_positives=test_max_positives,
-                export_path=output_dir / "test_rule_based"
-            )
-            rule_test_time = time.time() - rule_test_start
-            triplet_gen_times["test_rule_based"] = rule_test_time
-            self.timing["triplet_generation"]["test_rule_based"] = rule_test_time
-            
+            if rule_based:
+                rule_test_start = time.time()
+                rule_test_generator = TripletGenerator(
+                    labeled_pairs=self.test_pairs,
+                    collection=[doc for doc in self.collection if doc in self.test_documents],
+                    negative_miner=self.negative_miner,
+                    aspect_delimiter=self.aspect_delimiter,
+                    pos_neg_ratio=self.test_pos_neg_ratio,
+                    negative_sampling_weights={"rule_based": 1.0, "random": 0.0, "miner": 0.0},
+                    seed=self.seed,
+                    debug=self.debug,
+                    query_transformer=query_transformer
+                )
+                results["test_rule_based"] = rule_test_generator.generate_triplets(
+                    max_triplets_per_query=max_triplets_per_query,
+                    max_positives=test_max_positives,
+                    export_path=output_dir / "test_rule_based"
+                )
+                rule_test_time = time.time() - rule_test_start
+                triplet_gen_times["test_rule_based"] = rule_test_time
+                self.timing["triplet_generation"]["test_rule_based"] = rule_test_time
+                
             # Miner-based test set (if miner is available)
             if self.negative_miner:
                 miner_test_start = time.time()

@@ -30,7 +30,8 @@ checkpoints/
 *.pt
 *.bin
 venv/
-
+*.pkl
+*.tsv
 ## Experimentations
 experimentations/sample/*
 experiments/*
