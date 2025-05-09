@@ -30,12 +30,18 @@ checkpoints/
 *.pt
 *.bin
 venv/
-
+*.pickle
+*.json
+*.txt
+*.csv
+*.pdf
+*.xlsx
 ## Experimentations
 experimentations/sample/*
 experiments/*
 data/*
-
+*.env
+*.tsv
 ## indivisual one time test folders
 test_aspect_dataset_splitter_output/*
 test_aspect_processor_debug_output/*
@@ -44,3 +50,10 @@ test_aspect_splitter_output/*
 
 test_no_miner_output/*
 test_with_miner_output/*
+
+elasticsearc*
+.env
+.env
+benchmarking.ipynb
+benchmarks_batch.py
+benchmarks2.py

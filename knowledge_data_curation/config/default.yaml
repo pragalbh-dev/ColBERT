@@ -1,0 +1,37 @@
+paths:
+  industry_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/industries_quickie.csv"
+  factsheet_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/all_factsheets_cleaned_quickie.csv"
+  output_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/output/"
+  logs_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/logs/"
+
+openai:
+  model_chain_cleaner: "gpt-4.1-mini"
+  model_negative_generator: "gpt-4.1-mini"
+  parallel_threads: 40
+  batch_size: 20
+  rate_limit: 10000
+ 
+elasticsearch:
+  host: "localhost"
+  port: 9200
+  index_name: "industry_chains_quickie"
+  embedding_model: "text-embedding-3-small"
+  username: "elastic"  # Default Elasticsearch username
+  # Password will be loaded from ELASTIC_PASSWORD environment variable
+
+sampling:
+  hard_negative_count: 5
+  soft_negative_count: 5
+  nearest_neighbors: 50
+  window_size: 5
+  samples_per_window: 1
+  min_company_overlap: 1  # Minimum number of shared companies to consider chains as overlapping
+
+scoring:
+  strategy: "binary"  # Options: "binary", "reranker"
+  reranker_model: "BAAI/bge-reranker-large"
+
+logging:
+  level: "INFO"  # Options: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+  file_level: "DEBUG" 
+  console_level: "INFO" 

@@ -1,0 +1,21 @@
+# Custom configuration overrides
+paths:
+  industry_data: "/path/to/industry_df.csv"
+  factsheet_data: "/path/to/company_factsheets_df.csv"
+  output_dir: "knowledge_data_curation/output/"
+
+# Reduce the number of parallel threads to avoid rate limits
+openai:
+  parallel_threads: 4
+  rate_limit: 40
+
+# Elasticsearch configuration
+elasticsearch:
+  host: "localhost"
+  port: 9200
+  username: "elastic"  # This can be changed if using a different user
+  # Password is taken from ELASTIC_PASSWORD environment variable
+
+# Use the reranker scoring strategy
+scoring:
+  strategy: "reranker" 
