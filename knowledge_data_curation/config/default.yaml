@@ -1,30 +1,43 @@
 paths:
-  industry_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/industries_quickie.csv"
-  factsheet_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/all_factsheets_cleaned_quickie.csv"
+  industry_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/industries.csv"
+  factsheet_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/all_factsheets_cleaned.csv"
   output_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/output/"
   logs_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/logs/"
+
+reusability:
+  enable_reuse: true  # Master flag to enable/disable reusability features
+  reuse_cleaned_chains: true  # Reuse previously cleaned chains if available
+  reuse_elasticsearch_index: true  # Reuse existing elasticsearch index if available
 
 openai:
   model_chain_cleaner: "gpt-4.1-mini"
   model_negative_generator: "gpt-4.1-mini"
   parallel_threads: 40
-  batch_size: 20
+  batch_size: 50
   rate_limit: 10000
- 
+
 elasticsearch:
   host: "localhost"
   port: 9200
-  index_name: "industry_chains_quickie"
+  index_name: "industry_chains_parallel_v2"
   embedding_model: "text-embedding-3-small"
   username: "elastic"  # Default Elasticsearch username
   # Password will be loaded from ELASTIC_PASSWORD environment variable
+  indexing_batch_size: 100  # Number of documents per batch for parallel indexing
+  indexing_threads: 20  # Number of parallel threads for indexing
+
+embeddings:
+  batch_size: 100  # Number of texts per batch for parallel embedding
+  parallel_threads: 10  # Number of parallel threads for embedding
+  rate_limit_delay: 0.001  # Delay between API calls to avoid rate limits
 
 sampling:
+  batch_size: 100
   hard_negative_count: 5
   soft_negative_count: 5
-  nearest_neighbors: 50
+  nearest_neighbors: 25
   window_size: 5
-  samples_per_window: 1
+  samples_per_window: 2
   min_company_overlap: 1  # Minimum number of shared companies to consider chains as overlapping
 
 scoring:
@@ -33,5 +46,5 @@ scoring:
 
 logging:
   level: "INFO"  # Options: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-  file_level: "DEBUG" 
+  file_level: "DEBUG"
   console_level: "INFO" 

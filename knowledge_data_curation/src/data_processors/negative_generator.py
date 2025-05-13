@@ -29,6 +29,10 @@ class NegativeSampleGenerator:
         self.es_client = ESClient(config["elasticsearch"])
         self.overlap_manager = ChainOverlapManager()
         
+        # Setup reusability options
+        self.enable_reuse = config.get("reusability", {}).get("enable_reuse", False)
+        self.reuse_elasticsearch_index = config.get("reusability", {}).get("reuse_elasticsearch_index", False)
+        
         # Sampling configuration
         self.nearest_neighbors = config["sampling"]["nearest_neighbors"]
         self.window_size = config["sampling"]["window_size"]
@@ -36,6 +40,7 @@ class NegativeSampleGenerator:
         self.soft_negative_count = config["sampling"]["soft_negative_count"]
         
         logger.info(f"Initialized NegativeSampleGenerator with model {config['openai']['model_negative_generator']}")
+        logger.info(f"Reusability settings - Enable: {self.enable_reuse}, Reuse elasticsearch index: {self.reuse_elasticsearch_index}")
         
     def initialize(self, company_chains: Dict[str, List[str]], min_overlap: int = 1) -> None:
         """
@@ -49,13 +54,26 @@ class NegativeSampleGenerator:
         
         # Build overlap indices
         self.overlap_manager.build_overlap_index(company_chains, min_overlap)
-        json.dump(self.overlap_manager.overlapping_chains, open(f"{self.config['paths']['output_dir']}/overlapping_chains.json", "w"))
-
-        # Index chains in Elasticsearch
+        
+        # Index chains in Elasticsearch if needed
         unique_chains = list(set(
             chain for chains in company_chains.values() 
             for chain in chains
         ))
+        
+        if self.enable_reuse and self.reuse_elasticsearch_index:
+            # Check if index exists and has the same number of documents
+            if self.es_client.index_exists():
+                current_doc_count = self.es_client.get_document_count()
+                if current_doc_count == len(unique_chains):
+                    logger.info(f"Found existing Elasticsearch index '{self.es_client.index_name}' with {current_doc_count} documents. Skipping indexing.")
+                    return
+                else:
+                    logger.info(f"Existing index has {current_doc_count} documents but we need {len(unique_chains)}. Will reindex.")
+            else:
+                logger.info(f"Index '{self.es_client.index_name}' does not exist. Will create and index documents.")
+        
+        # If we reach here, we need to index the documents
         self.index_chains(unique_chains)
         
     def index_chains(self, chains: List[str]) -> None:
@@ -66,7 +84,16 @@ class NegativeSampleGenerator:
             chains: List of industry chains to index
         """
         logger.info(f"Indexing {len(chains)} chains in Elasticsearch")
+        
+        # Delete existing index if it exists
+        if self.es_client.index_exists():
+            logger.info(f"Deleting existing index '{self.es_client.index_name}'")
+            self.es_client.delete_index()
+        
+        # Create new index and index documents
+        self.es_client.create_index()
         self.es_client.index_documents(chains)
+        logger.info(f"Successfully indexed {len(chains)} chains in Elasticsearch")
         
     def get_candidate_negatives(self, chain: str) -> Tuple[List[str], List[str]]:
         """
@@ -100,7 +127,8 @@ class NegativeSampleGenerator:
             
             if size > len(valid_candidates):
                 break
-                
+            # break
+        logger.debug(f"Found {len(nearest)} nearest neighbors for chain: {chain}")
         # If we couldn't find enough nearest neighbors, use what we have
         if len(nearest) < self.nearest_neighbors:
             logger.warning(
@@ -279,7 +307,7 @@ class NegativeSampleGenerator:
         batch_results = batch_process(
             items=chains,
             process_fn=process_chain,
-            batch_size=self.config["sampling"].get("batch_size", 10),
+            batch_size=self.config["openai"].get("batch_size", 10),
             max_workers=self.config["openai"]["parallel_threads"]
         )
         
