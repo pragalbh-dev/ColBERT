@@ -140,7 +140,7 @@ class NegativeSampleGenerator:
             
             if size > len(valid_candidates):
                 break
-                
+            break
         search_time = time.time() - search_start
         logger.debug(
             f"Found {len(nearest)} nearest neighbors for chain: {chain} "
