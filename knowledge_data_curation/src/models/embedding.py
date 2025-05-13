@@ -8,7 +8,7 @@ import time
 logger = logging.getLogger(__name__)
 
 class EmbeddingModel:
-    def __init__(self, model_name: str, max_threads: int = 8, batch_size: int = 100, rate_limit_delay: float = 0.001):
+    def __init__(self, model_name: str, max_threads: int = 8, batch_size: int = 100, rate_limit_delay: float = 0.001, enable_parallel: bool = False):
         """
         Initialize the embedding model
         
@@ -17,12 +17,15 @@ class EmbeddingModel:
             max_threads: Maximum number of parallel threads
             batch_size: Size of batches for parallel processing
             rate_limit_delay: Delay between API calls to avoid rate limits
+            enable_parallel: Whether to enable parallel processing
         """
         self.model_name = model_name
         self.max_threads = max_threads
         self.batch_size = batch_size
         self.rate_limit_delay = rate_limit_delay
-        logger.info(f"Initializing embedding model: {model_name} with {max_threads} threads")
+        self.enable_parallel = enable_parallel
+        self.total_embeddings = 0
+        logger.info(f"Initializing embedding model: {model_name} with parallel={enable_parallel}, max_threads={max_threads}, batch_size={batch_size}")
         
     def get_embedding(self, text: str) -> List[float]:
         """
@@ -75,7 +78,7 @@ class EmbeddingModel:
             
     def get_batch_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
-        Get embeddings for multiple texts using parallel processing
+        Get embeddings for multiple texts, optionally using parallel processing
         
         Args:
             texts: List of texts to embed
@@ -83,10 +86,28 @@ class EmbeddingModel:
         Returns:
             List of embedding vectors
         """
-        logger.info(f"Getting batch embeddings for {len(texts)} texts using parallel processing")
+        mode = "parallel" if self.enable_parallel else "sequential"
+        logger.info(f"[{mode}] Getting batch embeddings for {len(texts)} texts")
+        start_time = time.time()
         
         try:
-            # Create batches
+            if not self.enable_parallel:
+                # Process sequentially in batches
+                all_embeddings = []
+                for i in range(0, len(texts), self.batch_size):
+                    batch = texts[i:i + self.batch_size]
+                    batch_start = time.time()
+                    embeddings = self._process_batch(batch)
+                    all_embeddings.extend(embeddings)
+                    batch_time = time.time() - batch_start
+                    self.total_embeddings += len(batch)
+                    if (i + 1) % (self.batch_size * 10) == 0:
+                        logger.info(f"[{mode}] Processed {i + 1}/{len(texts)} texts. Batch time: {batch_time:.2f}s. Total embeddings: {self.total_embeddings}")
+                total_time = time.time() - start_time
+                logger.info(f"[{mode}] Completed sequential processing of {len(texts)} texts in {total_time:.2f}s")
+                return all_embeddings
+            
+            # Process in parallel if enabled
             batches = []
             current_batch = []
             
@@ -99,33 +120,35 @@ class EmbeddingModel:
             if current_batch:
                 batches.append(current_batch)
                 
-            logger.info(f"Created {len(batches)} batches for parallel processing")
+            logger.info(f"[{mode}] Created {len(batches)} batches for parallel processing")
             
             # Process batches in parallel
             all_embeddings = []
             with ThreadPoolExecutor(max_workers=self.max_threads) as executor:
-                # Submit all batches
                 future_to_batch = {
                     executor.submit(self._process_batch, batch): i 
                     for i, batch in enumerate(batches)
                 }
                 
-                # Process completed batches
                 completed_batches = 0
                 for future in as_completed(future_to_batch):
                     batch_idx = future_to_batch[future]
                     try:
+                        batch_start = time.time()
                         batch_embeddings = future.result()
+                        batch_time = time.time() - batch_start
                         all_embeddings.extend(batch_embeddings)
                         completed_batches += 1
-                        if completed_batches % 10 == 0:  # Log progress every 10 batches
-                            logger.info(f"Completed {completed_batches}/{len(batches)} batches")
+                        self.total_embeddings += len(batch_embeddings)
+                        if completed_batches % 10 == 0:
+                            logger.info(f"[{mode}] Completed {completed_batches}/{len(batches)} batches. Batch time: {batch_time:.2f}s. Total embeddings: {self.total_embeddings}")
                     except Exception as e:
-                        logger.error(f"Batch {batch_idx} failed: {e}")
+                        logger.error(f"[{mode}] Batch {batch_idx} failed: {e}")
                         raise
             
-            logger.info(f"Successfully generated {len(all_embeddings)} embeddings")
+            total_time = time.time() - start_time
+            logger.info(f"[{mode}] Successfully generated {len(all_embeddings)} embeddings in {total_time:.2f}s")
             return all_embeddings
         except Exception as e:
-            logger.error(f"Error in parallel embedding generation: {e}")
+            logger.error(f"[{mode}] Error in embedding generation: {e}")
             raise 

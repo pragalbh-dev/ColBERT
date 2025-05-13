@@ -9,6 +9,7 @@ from knowledge_data_curation.src.utils.elasticsearch import ESClient
 from knowledge_data_curation.src.utils.parallel import batch_process
 from knowledge_data_curation.src.models.pydantic import NegativeSamplingResponse
 from knowledge_data_curation.src.utils.chain_overlap import ChainOverlapManager
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,15 @@ class NegativeSampleGenerator:
             max_threads=config["openai"]["parallel_threads"],
             rate_limit_delay=1.0 / config["openai"]["rate_limit"]
         )
-        self.es_client = ESClient(config["elasticsearch"])
+        # Initialize ESClient in indexing mode for indexing operations
+        self.indexing_es_client = ESClient(config["elasticsearch"], is_indexing=True)
+        # Initialize ESClient in non-indexing mode for search operations
+        self.search_es_client = ESClient(config["elasticsearch"], is_indexing=False)
+        
         self.overlap_manager = ChainOverlapManager()
+        
+        # Store all documents in memory
+        self._all_documents = None
         
         # Setup reusability options
         self.enable_reuse = config.get("reusability", {}).get("enable_reuse", False)
@@ -63,18 +71,22 @@ class NegativeSampleGenerator:
         
         if self.enable_reuse and self.reuse_elasticsearch_index:
             # Check if index exists and has the same number of documents
-            if self.es_client.index_exists():
-                current_doc_count = self.es_client.get_document_count()
+            if self.indexing_es_client.index_exists():
+                current_doc_count = self.indexing_es_client.get_document_count()
                 if current_doc_count == len(unique_chains):
-                    logger.info(f"Found existing Elasticsearch index '{self.es_client.index_name}' with {current_doc_count} documents. Skipping indexing.")
+                    logger.info(f"Found existing Elasticsearch index with {current_doc_count} documents. Skipping indexing.")
+                    # Load all documents into memory
+                    self._all_documents = self.search_es_client.get_all_documents()
                     return
                 else:
                     logger.info(f"Existing index has {current_doc_count} documents but we need {len(unique_chains)}. Will reindex.")
             else:
-                logger.info(f"Index '{self.es_client.index_name}' does not exist. Will create and index documents.")
+                logger.info(f"Index does not exist. Will create and index documents.")
         
         # If we reach here, we need to index the documents
         self.index_chains(unique_chains)
+        # Load all documents into memory after indexing
+        self._all_documents = self.search_es_client.get_all_documents()
         
     def index_chains(self, chains: List[str]) -> None:
         """
@@ -86,13 +98,13 @@ class NegativeSampleGenerator:
         logger.info(f"Indexing {len(chains)} chains in Elasticsearch")
         
         # Delete existing index if it exists
-        if self.es_client.index_exists():
-            logger.info(f"Deleting existing index '{self.es_client.index_name}'")
-            self.es_client.delete_index()
+        if self.indexing_es_client.index_exists():
+            logger.info(f"Deleting existing index")
+            self.indexing_es_client.delete_index()
         
         # Create new index and index documents
-        self.es_client.create_index()
-        self.es_client.index_documents(chains)
+        self.indexing_es_client.create_index()
+        self.indexing_es_client.index_documents(chains)
         logger.info(f"Successfully indexed {len(chains)} chains in Elasticsearch")
         
     def get_candidate_negatives(self, chain: str) -> Tuple[List[str], List[str]]:
@@ -105,37 +117,36 @@ class NegativeSampleGenerator:
         Returns:
             Tuple of (hard negative candidates, soft negative candidates)
         """
+        start_time = time.time()
         logger.debug(f"Getting candidate negatives for: {chain}")
         
-        # Get all chains that can be negative samples
-        all_chains = self.es_client.get_all_documents()
-        valid_candidates = self.overlap_manager.get_valid_negative_candidates(chain, all_chains)
+        # Use cached documents instead of fetching again
+        valid_candidates = self.overlap_manager.get_valid_negative_candidates(chain, self._all_documents)
         
         if not valid_candidates:
             logger.warning(f"No valid negative candidates found for chain: {chain}")
             return [], []
             
-        # Get nearest neighbors from valid candidates
+        # Get nearest neighbors from valid candidates using search client
         nearest = []
         size = min(self.nearest_neighbors * 2, len(valid_candidates))
+        search_start = time.time()
         
         while len(nearest) < self.nearest_neighbors and size <= len(valid_candidates):
-            candidates = self.es_client.search(query=chain, size=size)
+            candidates = self.search_es_client.search(query=chain, size=size)
             # Filter candidates to only include valid ones
             nearest = [c for c in candidates if c in valid_candidates]
             size *= 2
             
             if size > len(valid_candidates):
                 break
-            # break
-        logger.debug(f"Found {len(nearest)} nearest neighbors for chain: {chain}")
-        # If we couldn't find enough nearest neighbors, use what we have
-        if len(nearest) < self.nearest_neighbors:
-            logger.warning(
-                f"Could only find {len(nearest)} nearest neighbors for chain: {chain} "
-                f"(wanted {self.nearest_neighbors})"
-            )
-            
+                
+        search_time = time.time() - search_start
+        logger.debug(
+            f"Found {len(nearest)} nearest neighbors for chain: {chain} "
+            f"(search time: {search_time:.2f}s)"
+        )
+        
         # Sample hard negatives from windows
         hard_candidates = []
         for i in range(0, len(nearest), self.window_size):
@@ -158,9 +169,11 @@ class NegativeSampleGenerator:
             logger.warning(f"No soft negative candidates available for chain: {chain}")
             soft_candidates = []
         
+        total_time = time.time() - start_time
         logger.debug(
+            f"Generated candidates for chain: {chain} in {total_time:.2f}s. "
             f"Found {len(hard_candidates)} hard candidates and "
-            f"{len(soft_candidates)} soft candidates for chain: {chain}"
+            f"{len(soft_candidates)} soft candidates"
         )
         return hard_candidates, soft_candidates
         
@@ -293,17 +306,22 @@ class NegativeSampleGenerator:
         Returns:
             Dictionary mapping chains to their negative chains
         """
-        logger.info(f"Generating negatives for {len(chains)} chains")
+        start_time = time.time()
+        logger.info(f"Generating negatives for {len(chains)} chains using parallel processing")
         
         def process_chain(chain: str) -> Tuple[str, Dict[str, List[str]]]:
             try:
-                negatives = self.generate_negatives_for_chain(chain)
+                chain_start = time.time()
+                hard_candidates, soft_candidates = self.get_candidate_negatives(chain)
+                negatives = self.select_negatives(chain, hard_candidates, soft_candidates)
+                chain_time = time.time() - chain_start
+                logger.debug(f"Processed chain in {chain_time:.2f}s: {chain[:50]}...")
                 return chain, negatives.model_dump()
             except Exception as e:
                 logger.error(f"Error generating negatives for {chain}: {e}")
                 return chain, {"hard_negatives": [], "soft_negatives": []}
-
-        # Process chains in parallel using batch_process with correct parameters
+                
+        # Process chains in parallel
         batch_results = batch_process(
             items=chains,
             process_fn=process_chain,
@@ -311,13 +329,18 @@ class NegativeSampleGenerator:
             max_workers=self.config["openai"]["parallel_threads"]
         )
         
-        # Convert batch results to the expected dictionary format
+        # Convert batch results to dictionary
         results = {}
         for idx, result in batch_results.items():
             chain, negatives = result
             results[chain] = negatives
-        
-        logger.info(f"Generated negatives for {len(results)} chains")
+            
+        total_time = time.time() - start_time
+        rate = len(chains) / total_time if total_time > 0 else 0
+        logger.info(
+            f"Generated negatives for {len(results)} chains in {total_time:.2f}s "
+            f"({rate:.1f} chains/s)"
+        )
         return results
     
     def get_all_negatives_for_chain(self, chain: str, negative_results: Dict[str, Dict[str, List[str]]]) -> List[str]:
