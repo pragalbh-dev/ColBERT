@@ -127,7 +127,7 @@ class ChainCleaner:
                     logger.info(f"Merged {len(existing_cleaned_chains)} existing cleaned chains with new results")
                 except Exception as e:
                     logger.warning(f"Error merging with existing cleaned chains: {e}")
-            
+             
             # Save results if reusability is enabled
             if self.enable_reuse and self.reuse_cleaned_chains:
                 self.cleaned_chains_path.parent.mkdir(parents=True, exist_ok=True)

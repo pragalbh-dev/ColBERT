@@ -19,3 +19,15 @@ elasticsearch:
 # Use the reranker scoring strategy
 scoring:
   strategy: "reranker" 
+
+# Enable subchain generation for testing
+subchain_generation:
+  enabled: true
+  configurations:
+    - window_size: 1     # Individual categories  
+      shift: 1
+      enabled: true
+    - window_size: 2     # 2-category subchains
+      shift: 1           # Step by 1
+      enabled: true
+  deduplicate_subchains: true 

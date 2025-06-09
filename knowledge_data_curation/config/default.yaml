@@ -1,6 +1,6 @@
 paths:
-  industry_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/industries_sample.csv"
-  factsheet_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/all_factsheets_cleaned_sample.csv"
+  industry_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/industries_quickie.csv"
+  factsheet_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/all_factsheets_cleaned_quickie.csv"
   output_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/output/"
   logs_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/logs/"
 
@@ -12,8 +12,8 @@ reusability:
 openai:
   model_chain_cleaner: "gpt-4.1-mini"
   model_negative_generator: "gpt-4.1-mini"
-  parallel_threads: 40
-  batch_size: 50
+  parallel_threads: 10
+  batch_size: 100
   rate_limit: 10000
 
 elasticsearch:
@@ -27,12 +27,12 @@ elasticsearch:
   indexing_threads: 20  # Number of parallel threads for indexing
 
 embeddings:
-  batch_size: 100  # Number of texts per batch for parallel embedding
-  parallel_threads: 10  # Number of parallel threads for embedding
+  batch_size: 5  # Number of texts per batch for parallel embedding
+  parallel_threads: 5  # Number of parallel threads for embedding
   rate_limit_delay: 0.001  # Delay between API calls to avoid rate limits
 
 sampling:
-  batch_size: 100
+  batch_size: 10
   hard_negative_count: 5
   soft_negative_count: 5
   nearest_neighbors: 25
@@ -48,3 +48,17 @@ logging:
   level: "INFO"  # Options: "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
   file_level: "DEBUG"
   console_level: "INFO" 
+
+subchain_generation:
+  enabled: true  # Master flag to enable/disable subchain generation
+  configurations:
+    - window_size: 1     # Individual categories  
+      shift: 1
+      enabled: true
+    - window_size: 3     # 3-category subchains
+      shift: 2           # Step by 2
+      enabled: true
+    - window_size: 5     # 5-category subchains  
+      shift: 3           # Step by 3
+      enabled: false
+  deduplicate_subchains: true 
