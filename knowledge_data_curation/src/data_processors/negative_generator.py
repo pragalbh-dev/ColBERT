@@ -141,6 +141,7 @@ class NegativeSampleGenerator:
             if size > len(valid_candidates):
                 break
             break
+        
         search_time = time.time() - search_start
         logger.debug(
             f"Found {len(nearest)} nearest neighbors for chain: {chain} "
@@ -364,75 +365,4 @@ class NegativeSampleGenerator:
             
         return list(negatives)
         
-    def initialize_with_subchains(
-        self, 
-        company_chains: Dict[str, List[str]], 
-        subchain_data: Dict[str, Any], 
-        min_overlap: int = 1
-    ) -> None:
-        """
-        Initialize with both chains and subchains for negative generation
-        
-        Args:
-            company_chains: Dictionary mapping company IDs to their chains
-            subchain_data: Complete subchain data from SubchainGenerator
-            min_overlap: Minimum number of shared companies to consider chains as overlapping
-        """
-        logger.info("Initializing negative sample generator with subchains")
-        
-        # Build overlap indices for full chains
-        self.overlap_manager.build_overlap_index(company_chains, min_overlap)
-        
-        # Collect all unique chains and subchains for indexing
-        unique_chains = list(set(
-            chain for chains in company_chains.values() 
-            for chain in chains
-        ))
-        
-        # Add subchains if enabled
-        all_documents = unique_chains.copy()
-        if subchain_data.get("enabled", False):
-            unique_subchains = subchain_data.get("deduplicated_subchains", [])
-            all_documents.extend(unique_subchains)
-            logger.info(f"Added {len(unique_subchains)} subchains to indexing list")
-        
-        logger.info(f"Total documents to index: {len(all_documents)} (chains: {len(unique_chains)}, subchains: {len(all_documents) - len(unique_chains)})")
-        
-        # Index all documents (chains + subchains) in Elasticsearch
-        if self.enable_reuse and self.reuse_elasticsearch_index:
-            # Check if index exists and has the same number of documents
-            if self.indexing_es_client.index_exists():
-                current_doc_count = self.indexing_es_client.get_document_count()
-                if current_doc_count == len(all_documents):
-                    logger.info(f"Found existing Elasticsearch index with {current_doc_count} documents. Skipping indexing.")
-                    # Load all documents into memory
-                    self._all_documents = self.search_es_client.get_all_documents()
-                    return
-                else:
-                    logger.info(f"Existing index has {current_doc_count} documents but we need {len(all_documents)}. Will reindex.")
-            else:
-                logger.info(f"Index does not exist. Will create and index documents.")
-        
-        # If we reach here, we need to index the documents
-        self.index_chains(all_documents)
-        # Load all documents into memory after indexing
-        self._all_documents = self.search_es_client.get_all_documents()
-        
-    def generate_subchain_negatives(self, subchains: List[str]) -> Dict[str, Dict[str, List[str]]]:
-        """
-        Generate negatives specifically for subchains
-        
-        Args:
-            subchains: List of subchains to generate negatives for
-            
-        Returns:
-            Dictionary mapping subchains to their negative results
-        """
-        if not subchains:
-            logger.info("No subchains provided for negative generation")
-            return {}
-            
-        logger.info(f"Generating negatives for {len(subchains)} subchains")
-        
-        # Use the same approach as generate_negatives but for subchains
-        return self.generate_negatives(subchains) 
+ 

@@ -146,6 +146,7 @@ class SubchainGenerator:
         reverse_mappings = self._create_reverse_mappings(chain_subchains, cleaned_chains)
         
         # Prepare result
+        # 
         result = {
             "enabled": True,
             "subchain_mappings": chain_subchains,
@@ -268,4 +269,64 @@ class SubchainGenerator:
         
         logger.info(f"Created factsheet mapping for {len(subchain_to_original)} subchains")
         
-        return subchain_to_original 
+        return subchain_to_original
+        
+    def create_company_subchains_mapping(
+        self,
+        subchain_data: Dict[str, Any],
+        company_chains: Dict[str, List[str]],
+        cleaned_chains: Dict[str, str]
+    ) -> Dict[str, List[str]]:
+        """
+        Create mapping from companies to subchains (similar to company_chains but for subchains)
+        
+        Args:
+            subchain_data: Complete subchain data from generate_all_subchains
+            company_chains: Original mapping of companies to chains
+            cleaned_chains: Mapping of original to cleaned chains
+            
+        Returns:
+            Dictionary mapping company IDs to lists of subchains
+        """
+        if not subchain_data.get("enabled", False):
+            logger.info("Subchain generation disabled - returning empty company_subchains mapping")
+            return {}
+            
+        logger.info("Creating company-subchains mapping for overlap calculation")
+        
+        # Get reverse mapping from cleaned chains to original chains
+        cleaned_to_original = {v: k for k, v in cleaned_chains.items()}
+        
+        # Get subchain mappings
+        subchain_mappings = subchain_data.get("subchain_mappings", {})
+        
+        company_subchains = {}
+        
+        # For each company and their chains
+        for company_id, original_chains in company_chains.items():
+            company_subchains[company_id] = []
+            
+            # For each chain belonging to this company
+            for original_chain in original_chains:
+                # Get the cleaned version of this chain
+                cleaned_chain = cleaned_chains.get(original_chain)
+                if not cleaned_chain:
+                    continue
+                    
+                # Get subchains for this cleaned chain
+                chain_subchains = subchain_mappings.get(cleaned_chain, {})
+                
+                # Add all subchains from all configurations
+                for config_id, subchains in chain_subchains.items():
+                    company_subchains[company_id].extend(subchains)
+            
+            # Remove duplicates
+            company_subchains[company_id] = list(set(company_subchains[company_id]))
+        
+        # Filter out companies with no subchains
+        company_subchains = {k: v for k, v in company_subchains.items() if v}
+        
+        total_subchains = sum(len(subchains) for subchains in company_subchains.values())
+        logger.info(f"Created company-subchains mapping: {len(company_subchains)} companies mapped to {total_subchains} total subchains")
+        
+        return company_subchains 

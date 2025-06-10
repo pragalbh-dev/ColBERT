@@ -122,12 +122,9 @@ class ColBERTTrainingPipeline:
         logger.info("Step 3: Generating subchains from cleaned chains")
         subchain_data = self.subchain_generator.generate_all_subchains(cleaned_chains)
         
-        # Step 4: Initialize negative generator with subchains
-        logger.info("Step 4: Initializing negative generator with subchains")
-        if subchain_data.get("enabled", False):
-            self.negative_generator.initialize_with_subchains(cleaned_company_chains, subchain_data)
-        else:
-            self.negative_generator.initialize(cleaned_company_chains)
+        # Step 4: Initialize negative generator for chains
+        logger.info("Step 4: Initializing negative generator for chains")
+        self.negative_generator.initialize(cleaned_company_chains)
         
         # Step 5: Generate negative chains
         logger.info("Step 5: Generating negative chains")
@@ -135,18 +132,37 @@ class ColBERTTrainingPipeline:
         negative_chains_path = self.negative_chains_dir / "negative_chains.json"
         save_json(negative_chains, str(negative_chains_path))
         
-        # Step 6: Generate negative subchains (if enabled)
+        # Step 6: Generate negative subchains (if enabled) - separate process
         negative_subchains = {}
         if subchain_data.get("enabled", False):
-            logger.info("Step 6: Generating negative subchains")
+            logger.info("Step 6: Processing subchains separately")
+            
+            # Create company-subchains mapping for proper overlap calculation
+            company_subchains = self.subchain_generator.create_company_subchains_mapping(
+                subchain_data, company_chains, cleaned_chains
+            )
+            
+            # Create a separate NegativeSampleGenerator instance for subchains
+            logger.info("Step 6a: Initializing separate negative generator for subchains")
+            subchain_negative_generator = NegativeSampleGenerator(self.config)
+            subchain_negative_generator.initialize(company_subchains)
+            
+            # Generate negatives for subchains
+            logger.info("Step 6b: Generating negative subchains")
             unique_subchains = subchain_data.get("deduplicated_subchains", [])
-            negative_subchains = self.negative_generator.generate_subchain_negatives(unique_subchains)
+            negative_subchains = subchain_negative_generator.generate_negatives(unique_subchains)
             negative_subchains_path = self.negative_chains_dir / "negative_subchains.json"
             save_json(negative_subchains, str(negative_subchains_path))
         
         # Log token usage after negative generation
         negative_gen_usage = self.negative_generator.llm_client.get_token_usage()
-        logger.info(f"Negative generation token usage: {negative_gen_usage}")
+        logger.info(f"Chain negative generation token usage: {negative_gen_usage}")
+        
+        # Log subchain negative generation token usage if applicable
+        subchain_negative_gen_usage = {}
+        if subchain_data.get("enabled", False) and 'subchain_negative_generator' in locals():
+            subchain_negative_gen_usage = subchain_negative_generator.llm_client.get_token_usage()
+            logger.info(f"Subchain negative generation token usage: {subchain_negative_gen_usage}")
         
         # Step 7: Generate query-factsheet positives
         logger.info("Step 7: Generating query-factsheet positives for full chains")
@@ -191,11 +207,14 @@ class ColBERTTrainingPipeline:
         # Log final token usage statistics
         total_usage = {
             "chain_cleaning": chain_cleaning_usage,
-            "negative_generation": negative_gen_usage
+            "chain_negative_generation": negative_gen_usage,
+            "subchain_negative_generation": subchain_negative_gen_usage
         }
         logger.info("Final token usage statistics:")
         logger.info(f"Chain cleaning: {chain_cleaning_usage}")
-        logger.info(f"Negative generation: {negative_gen_usage}")
+        logger.info(f"Chain negative generation: {negative_gen_usage}")
+        if subchain_negative_gen_usage:
+            logger.info(f"Subchain negative generation: {subchain_negative_gen_usage}")
         
         # Save token usage statistics
         token_stats_path = self.output_dir / "token_usage_stats.json"

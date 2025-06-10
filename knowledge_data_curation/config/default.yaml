@@ -5,15 +5,15 @@ paths:
   logs_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/logs/"
 
 reusability:
-  enable_reuse: true  # Master flag to enable/disable reusability features
-  reuse_cleaned_chains: true  # Reuse previously cleaned chains if available
-  reuse_elasticsearch_index: true  # Reuse existing elasticsearch index if available
+  enable_reuse: false  # Master flag to enable/disable reusability features
+  reuse_cleaned_chains: false  # Reuse previously cleaned chains if available
+  reuse_elasticsearch_index: false  # Reuse existing elasticsearch index if available
 
 openai:
   model_chain_cleaner: "gpt-4.1-mini"
   model_negative_generator: "gpt-4.1-mini"
-  parallel_threads: 10
-  batch_size: 100
+  parallel_threads: 30
+  batch_size: 300
   rate_limit: 10000
 
 elasticsearch:
@@ -34,10 +34,10 @@ embeddings:
 sampling:
   batch_size: 10
   hard_negative_count: 5
-  soft_negative_count: 5
+  soft_negative_count: 2
   nearest_neighbors: 25
   window_size: 5
-  samples_per_window: 2
+  samples_per_window: 3
   min_company_overlap: 1  # Minimum number of shared companies to consider chains as overlapping
 
 scoring:

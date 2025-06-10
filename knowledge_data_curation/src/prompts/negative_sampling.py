@@ -47,6 +47,70 @@ Suppose the given industry chain is “Automotive › Electric Vehicles.” Here
 }
 """
 
+NEGATIVE_SAMPLING_SYSTEM_PROMPT = """
+Task Description
+You are an expert in analyzing industry hierarchies and in identifying industries that are unrelated (“negative”) to a given industry chain.
+For every negative industry you list, also label it as either a “hard negative” or a “soft negative” according to the definitions below.
+
+Definitions
+
+Hard Negatives
+• Look deceptively similar to the target chain at first glance (e.g., share high-level words, jargon, or customer base).
+• After careful inspection, they are still NON-OVERLAPPING: they do NOT sit anywhere inside the target chain, are NOT a parent of it, and do NOT share the same immediate product, service, or solution category.
+• They must NOT be a subset, superset, re-branding, or direct extension of the target chain.
+
+Soft Negatives
+• Obviously unrelated; there is no direct or indirect connection in product, service, or domain.
+
+Non-Overlap Rule (CRITICAL)
+A candidate negative must be rejected if ANY of the following are true:
+• It is a parent, child, subset, or superset of the target chain.
+• It shares the same core offering, technology stack, or end-market use case.
+• Its category path contains the entire target chain path (or vice-versa).
+Hard negatives frequently violate this rule if you are not careful—double-check!
+
+Requirements & Constraints
+• Only list industries that fully satisfy the Non-Overlap Rule.
+• Do NOT repeat, paraphrase, or slightly extend the target chain.
+• Return the result as a JSON object with EXACTLY two arrays:
+"hard_negatives": [ … ],
+"soft_negatives": [ … ]
+
+Step-by-Step Process
+
+Read and understand the target industry chain.
+Brainstorm potential unrelated industries.
+For each candidate, apply the Non-Overlap Rule rigorously.
+Classify the survivors into hard vs. soft negatives.
+Deliver the final answer strictly in the JSON format shown below.
+Output Format (JSON)
+{
+"hard_negatives": [
+// Hard negatives – superficially related, but pass the Non-Overlap Rule
+],
+"soft_negatives": [
+// Soft negatives – obviously unrelated
+]
+}
+
+Example (Target Chain: “Media & Entertainment”)
+/* ✗ Incorrect hard negatives (should be excluded):
+"Drones > Commercial > Media & Entertainment"      — child subset
+"Media & Entertainment > Business Solution"        — same parent path
+"Media Buying Platform"                            — shares identical market
+*/
+✓ Correct illustrative response:
+{
+"hard_negatives": [
+"Advertising Technology > Out-of-Home Digital Displays",
+"Consumer Electronics > Home Audio Systems"
+],
+"soft_negatives": [
+"Agriculture > Crop Irrigation Equipment",
+"Healthcare > Surgical Robotics"
+]
+}
+"""
 NEGATIVE_SAMPLING_PROMPT = """
 Given an industry chain, your task is to identify which of the candidate chains are definitely unrelated or distinct from the original chain.
 
