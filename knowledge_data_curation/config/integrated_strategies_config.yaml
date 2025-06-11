@@ -38,7 +38,7 @@ embeddings:
 openai:
   model_chain_cleaner: "gpt-4.1-mini"
   model_negative_generator: "gpt-4.1-mini"
-  model_factsheet_generator: "gpt-4.1"  # Use GPT-4 for higher quality synthetic factsheets
+  model_factsheet_generator: "gpt-4.1-mini"
   parallel_threads: 10
   batch_size: 300
   rate_limit: 100
@@ -105,8 +105,8 @@ synthetic_generation:
   cache_filename: "integrated_synthetic_factsheets.json"
   
   # 🚀 OPTIMIZED PARALLELIZATION SETTINGS
-  factsheets_per_call: 4            # Generate 3 factsheets per LLM call (reduces token usage)
-  parallel_chains: 2                # Process 4 chains simultaneously 
+  factsheets_per_call: 10            
+  parallel_chains: 10                
   max_parallel_calls: 100            # Total parallel capacity (auto-optimized based on other settings)
   
   # Output file configurations

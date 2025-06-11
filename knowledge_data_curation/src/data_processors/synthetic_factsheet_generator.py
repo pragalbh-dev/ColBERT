@@ -117,6 +117,33 @@ Create {batch_size} different factsheets with:
 - Realistic business descriptions matching the industry chain
 - Similar length and structure to the samples
 - Vary the company size, focus areas, and specific details"""
+        
+        prompt=f"""Task
+Generate exactly {batch_size} realistic, diverse company factsheets that all plausibly operate within the specified industry chain {industry_chain}.
+
+Sample factsheets:
+{samples_context}
+
+Output Format for a single factsheet: 
+
+Products / Services / Offerings: <single sentence>
+Industry & Target Audience: <single sentence>
+Business Model: <single sentence>
+Revenue Model: <single sentence>
+Technology Used: <single sentence>
+
+
+
+Global Rules
+We need to explicitly mention the aspects in the output format in any order or combination., but should be there, 
+Output only the factsheets—no commentary, headers, or explanations.
+Produce exactly {batch_size} factsheets.
+Keep every factsheet under 350 words (≈ ≤ 2,100 characters).
+Use a clear, professional, factual tone. No marketing fluff, hype, or excessive detail.
+Every factsheet must contain only the five required aspects, each written as ONE full sentence.
+Do NOT repeat the industry-chain path verbatim; instead, paraphrase it naturally inside the “Industry & Target Audience” sentence.
+No external knowledge or data scraping. Content must be fully synthetic yet plausible.
+Avoid brand, celebrity, sensitive, or disallowed content."""
 
         try:
             # ✅ FIX: Use openai module directly, not self.llm_client.client
@@ -317,6 +344,34 @@ REQUIREMENTS:
 - Make each company unique but realistic for this industry
 - Use professional, factual tone
 - NO lengthy descriptions or excessive detail"""
+        
+        prompt=f"""Task
+Generate exactly {target_count} realistic, diverse company factsheets that all plausibly operate within the specified industry chain {industry_chain}.
+
+Sample factsheets:
+{sample_context}
+
+Output Format for a single factsheet: 
+
+Products / Services / Offerings: <single sentence>
+Industry & Target Audience: <single sentence>
+Business Model: <single sentence>
+Revenue Model: <single sentence>
+Technology Used: <single sentence>
+
+
+
+Global Rules
+We need to explicitly mention the aspects in the output format in any order or combination., but should be there, 
+Output only the factsheets—no commentary, headers, or explanations.
+Produce exactly {target_count} factsheets.
+Keep every factsheet under 350 words (≈ ≤ 2,100 characters).
+Use a clear, professional, factual tone. No marketing fluff, hype, or excessive detail.
+Every factsheet must contain only the five required aspects, each written as ONE full sentence.
+Do NOT repeat the industry-chain path verbatim; instead, paraphrase it naturally inside the “Industry & Target Audience” sentence.
+No external knowledge or data scraping. Content must be fully synthetic yet plausible.
+Avoid brand, celebrity, sensitive, or disallowed content.
+"""
 
         try:
             # Single API call per chain
