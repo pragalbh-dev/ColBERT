@@ -1,17 +1,22 @@
 from typing import Dict, List, Tuple, Any, Optional
+import pandas as pd
 import logging
 import os
 import yaml
 from pathlib import Path
 import pandas as pd
 
-from knowledge_data_curation.src.data_processors.chain_cleaner import ChainCleaner
-from knowledge_data_curation.src.data_processors.negative_generator import NegativeSampleGenerator
-from knowledge_data_curation.src.data_processors.data_loader import DataLoader
-from knowledge_data_curation.src.data_processors.subchain_generator import SubchainGenerator
-from knowledge_data_curation.src.pipelines.triplet_generator import TripletGenerator
-from knowledge_data_curation.src.utils.io import save_json, save_csv
-from knowledge_data_curation.src.utils.logger import Logger
+from src.data_processors.chain_cleaner import ChainCleaner
+from src.data_processors.negative_generator import NegativeSampleGenerator
+from src.data_processors.data_loader import DataLoader
+from src.data_processors.subchain_generator import SubchainGenerator
+from src.data_processors.imbalance_analyzer import DataImbalanceAnalyzer
+from src.data_processors.synthetic_factsheet_generator import SyntheticFactsheetGenerator
+from src.data_processors.data_normalizer import DataNormalizer
+from src.utils.cache_manager import SyntheticDataCacheManager
+from src.pipelines.triplet_generator import TripletGenerator
+from src.utils.io import save_json, save_csv
+from src.utils.logger import Logger
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +39,12 @@ class ColBERTTrainingPipeline:
         self.subchain_generator = SubchainGenerator(self.config)
         self.negative_generator = NegativeSampleGenerator(self.config)
         self.triplet_generator = TripletGenerator(self.config)
+        
+        # Initialize synthetic data generation components
+        self.imbalance_analyzer = DataImbalanceAnalyzer(self.config)
+        self.synthetic_generator = SyntheticFactsheetGenerator(self.config)
+        self.data_normalizer = DataNormalizer(self.config)
+        self.cache_manager = SyntheticDataCacheManager(self.config)
         
         # Initialize paths
         self.output_dir = Path(self.config["paths"]["output_dir"])
@@ -117,6 +128,42 @@ class ColBERTTrainingPipeline:
                 cleaned_chains[chain] for chain in chains 
                 if chain in cleaned_chains
             ]
+        
+        # Step 2.5: Synthetic Data Generation (if enabled)
+        if self.config.get("synthetic_generation", {}).get("enabled", False):
+            logger.info("Step 2.5: Generating synthetic factsheets for data balancing")
+            
+            # Check cache first
+            if self.cache_manager.reuse_existing and self.cache_manager.is_cached_data_available():
+                logger.info("Using cached synthetic data")
+                cached_data = self.cache_manager.load_cached_data()
+                augmented_industry_df = cached_data["industry_df"]
+                augmented_factsheet_df = cached_data["factsheet_df"]
+            else:
+                # Generate new synthetic data
+                augmented_industry_df, augmented_factsheet_df = self._generate_synthetic_data_step(
+                    self.data_loader.load_industry_data(),
+                    self.data_loader.load_factsheet_data(),
+                    cleaned_chains,
+                    company_chains
+                )
+                
+                # Cache the results if caching is enabled
+                if self.cache_manager.cache_enabled:
+                    # Note: Individual components handle their own caching
+                    pass
+            
+            # Update data loader to use augmented data
+            self.data_loader.override_data(augmented_industry_df, augmented_factsheet_df)
+            
+            # Update company mappings with augmented data
+            company_chains = self.data_loader.get_company_chains()
+            cleaned_company_chains = {}
+            for company_id, chains in company_chains.items():
+                cleaned_company_chains[company_id] = [
+                    cleaned_chains[chain] for chain in chains 
+                    if chain in cleaned_chains
+                ]
         
         # Step 3: Generate subchains from cleaned chains
         logger.info("Step 3: Generating subchains from cleaned chains")
@@ -580,6 +627,108 @@ class ColBERTTrainingPipeline:
             logger.info(f"Saved subchain triplets: {stats['subchains']['total_triplets']} for {stats['subchains']['total_queries']} queries")
         logger.info(f"Total combined triplets: {stats['combined']['total_triplets']} for {stats['combined']['total_queries']} queries")
         logger.info(f"Statistics: {stats}")
+    
+    def _generate_synthetic_data_step(self, 
+                                    industry_df: pd.DataFrame, 
+                                    factsheet_df: pd.DataFrame,
+                                    cleaned_chains: Dict[str, str],
+                                    company_chains: Dict[str, List[str]]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Generate synthetic factsheets for underrepresented chains
+        
+        Args:
+            industry_df: Original industry data
+            factsheet_df: Original factsheet data
+            cleaned_chains: Dictionary mapping original chains to cleaned chains
+            company_chains: Dictionary mapping company IDs to their chains
+            
+        Returns:
+            Tuple of (augmented_industry_df, augmented_factsheet_df)
+        """
+        logger.info("Starting synthetic data generation step")
+        
+        # Step 1: Analyze data imbalance
+        logger.info("Step 1: Analyzing data imbalance")
+        company_factsheets = self.data_loader.get_company_factsheets()
+        analysis_stats = self.imbalance_analyzer.analyze_chain_distribution(company_chains)
+        
+        # Step 2: Identify underrepresented chains
+        logger.info("Step 2: Identifying underrepresented chains")
+        underrepresented_chains = self.imbalance_analyzer.identify_underrepresented_chains(
+            cleaned_chains, company_chains
+        )
+        
+        if not underrepresented_chains:
+            logger.info("No underrepresented chains found - skipping synthetic generation")
+            # Return normalized original data
+            normalized_industry_df = self.data_normalizer.normalize_company_ids(industry_df)
+            normalized_factsheet_df = self.data_normalizer.normalize_company_ids(factsheet_df)
+            return normalized_industry_df, normalized_factsheet_df
+        
+        # Step 3: Get sample factsheets for underrepresented chains
+        logger.info("Step 3: Getting sample factsheets for underrepresented chains")
+        chain_samples = self.imbalance_analyzer.get_chain_sample_mapping(
+            underrepresented_chains, cleaned_chains, company_chains, company_factsheets
+        )
+        
+        # Filter out chains without samples
+        chains_with_samples = [chain for chain in underrepresented_chains if chain in chain_samples]
+        if len(chains_with_samples) < len(underrepresented_chains):
+            logger.warning(f"Could only find samples for {len(chains_with_samples)} out of {len(underrepresented_chains)} underrepresented chains")
+        
+        if not chains_with_samples:
+            logger.warning("No chains with sample factsheets found - skipping synthetic generation")
+            # Return normalized original data
+            normalized_industry_df = self.data_normalizer.normalize_company_ids(industry_df)
+            normalized_factsheet_df = self.data_normalizer.normalize_company_ids(factsheet_df)
+            return normalized_industry_df, normalized_factsheet_df
+        
+        # Step 4: Generate balance report
+        target_count = self.config.get("synthetic_generation", {}).get("target_factsheets_per_chain", 10)
+        balance_report = self.imbalance_analyzer.generate_balance_report(analysis_stats, target_count)
+        
+        # Step 5: Generate synthetic factsheets
+        logger.info("Step 5: Generating synthetic factsheets")
+        synthetic_data = self.synthetic_generator.batch_generate_factsheets(
+            chains_with_samples, chain_samples
+        )
+        
+        # Step 6: Validate generated factsheets
+        logger.info("Step 6: Validating generated factsheets")
+        validation_results = self.synthetic_generator.validate_generated_factsheets(synthetic_data)
+        
+        # Step 7: Save generation metadata
+        generation_stats = {
+            "underrepresented_chains": len(underrepresented_chains),
+            "chains_with_samples": len(chains_with_samples),
+            "chains_processed": len(synthetic_data),
+            "balance_report": balance_report
+        }
+        self.synthetic_generator.save_generation_metadata(
+            synthetic_data, validation_results, generation_stats
+        )
+        
+        # Step 8: Create augmented datasets
+        logger.info("Step 8: Creating augmented datasets with synthetic data")
+        augmented_industry_df, augmented_factsheet_df = self.data_normalizer.create_augmented_datasets(
+            industry_df, factsheet_df, synthetic_data, cleaned_chains
+        )
+        
+        # Step 9: Cache the synthetic data if enabled
+        if self.cache_manager.cache_enabled:
+            logger.info("Step 9: Caching synthetic data")
+            cache_data = {
+                "synthetic_data": synthetic_data,
+                "generation_config": {
+                    "target_count": target_count,
+                    "chains_processed": list(synthetic_data.keys()),
+                    "validation_results": validation_results
+                }
+            }
+            self.cache_manager.save_cached_data(cache_data)
+        
+        logger.info("Synthetic data generation step completed successfully")
+        return augmented_industry_df, augmented_factsheet_df
     
     @classmethod
     def load_from_checkpoint(cls, config_path: str, checkpoint_dir: str) -> 'ColBERTTrainingPipeline':

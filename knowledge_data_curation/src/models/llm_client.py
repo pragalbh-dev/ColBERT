@@ -4,7 +4,7 @@ import logging
 import sys
 import openai
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from knowledge_data_curation.src.utils.token_counter import TokenCounter
+from src.utils.token_counter import TokenCounter
 
 # Configure logger for real-time output
 logger = logging.getLogger(__name__)

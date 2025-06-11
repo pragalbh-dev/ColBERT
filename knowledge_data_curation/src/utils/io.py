@@ -4,7 +4,7 @@ import pandas as pd
 from typing import Dict, List, Any, Union
 from pathlib import Path
 import logging
-from knowledge_data_curation.src.utils.logger import Logger
+from src.utils.logger import Logger
 
 logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 from typing import Dict, List, Tuple, Any
 import logging
-from knowledge_data_curation.src.models.reranker import Reranker
+from src.models.reranker import Reranker
 
 logger = logging.getLogger(__name__)
 

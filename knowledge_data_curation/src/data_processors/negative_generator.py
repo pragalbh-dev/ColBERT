@@ -3,12 +3,12 @@ import logging
 import random
 import re
 import json
-from knowledge_data_curation.src.models.llm_client import OpenAIClient
-from knowledge_data_curation.src.prompts.negative_sampling import NEGATIVE_SAMPLING_PROMPT, NEGATIVE_SAMPLING_SYSTEM_PROMPT
-from knowledge_data_curation.src.utils.elasticsearch import ESClient
-from knowledge_data_curation.src.utils.parallel import batch_process
-from knowledge_data_curation.src.models.pydantic import NegativeSamplingResponse
-from knowledge_data_curation.src.utils.chain_overlap import ChainOverlapManager
+from src.models.llm_client import OpenAIClient
+from src.prompts.negative_sampling import NEGATIVE_SAMPLING_PROMPT, NEGATIVE_SAMPLING_SYSTEM_PROMPT
+from src.utils.elasticsearch import ESClient
+from src.utils.parallel import batch_process
+from src.models.pydantic import NegativeSamplingResponse
+from src.utils.chain_overlap import ChainOverlapManager
 import time
 
 logger = logging.getLogger(__name__)
@@ -183,17 +183,10 @@ class NegativeSampleGenerator:
         chain: str, 
         hard_candidates: List[str], 
         soft_candidates: List[str]
-    ) -> Dict[str, List[str]]:
+    ) -> dict:
         """
         Use LLM to select definite negatives from candidates
-        
-        Args:
-            chain: The original industry chain
-            hard_candidates: List of hard negative candidates
-            soft_candidates: List of soft negative candidates
-            
-        Returns:
-            Dictionary with selected hard and soft negatives
+        Returns a dict with hard_negatives and soft_negatives (for pipeline compatibility)
         """
         logger.debug(f"Selecting negatives for: {chain}")
         
@@ -202,18 +195,27 @@ class NegativeSampleGenerator:
         soft_candidates_str = "\n".join([f"{i+1}. {c}" for i, c in enumerate(soft_candidates)])
         
         try:
-            logger.info(f"Using response format: {NegativeSamplingResponse}")
-            response = self.llm_client.complete(
-                prompt=NEGATIVE_SAMPLING_PROMPT.format(
-                    chain=chain,
-                    hard_candidates=hard_candidates_str,
-                    soft_candidates=soft_candidates_str
-                ),
-                system_prompt=NEGATIVE_SAMPLING_SYSTEM_PROMPT,
-                temperature=0.1,
-                response_format=NegativeSamplingResponse
+            from openai import OpenAI
+            from src.models.pydantic import NegativeSamplingResponse
+            client = OpenAI()
+            completion = client.beta.chat.completions.parse(
+                model=self.llm_client.model,
+                messages=[
+                    {"role": "system", "content": NEGATIVE_SAMPLING_SYSTEM_PROMPT},
+                    {"role": "user", "content": NEGATIVE_SAMPLING_PROMPT.format(
+                        chain=chain,
+                        hard_candidates=hard_candidates_str,
+                        soft_candidates=soft_candidates_str
+                    )}
+                ],
+                response_format=NegativeSamplingResponse,
+                temperature=0.1
             )
-            return response
+            parsed = completion.choices[0].message.parsed
+            # Return as dict for compatibility
+            return parsed.model_dump() if hasattr(parsed, 'model_dump') else dict(parsed)
+
+            # return parsed
         except Exception as e:
             logger.error(f"Error selecting negatives: {e}")
             raise
@@ -317,7 +319,9 @@ class NegativeSampleGenerator:
                 negatives = self.select_negatives(chain, hard_candidates, soft_candidates)
                 chain_time = time.time() - chain_start
                 logger.debug(f"Processed chain in {chain_time:.2f}s: {chain[:50]}...")
-                return chain, negatives.model_dump()
+                # return chain, negatives.model_dump()
+
+                return chain,negatives
             except Exception as e:
                 logger.error(f"Error generating negatives for {chain}: {e}")
                 return chain, {"hard_negatives": [], "soft_negatives": []}

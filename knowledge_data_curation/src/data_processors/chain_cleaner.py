@@ -3,9 +3,9 @@ import logging
 import json
 import os
 from pathlib import Path
-from knowledge_data_curation.src.models.llm_client import OpenAIClient
-from knowledge_data_curation.src.prompts.chain_cleaning import CHAIN_CLEANING_PROMPT, CHAIN_CLEANING_SYSTEM_PROMPT
-from knowledge_data_curation.src.utils.parallel import batch_process, ordered_batch_results
+from src.models.llm_client import OpenAIClient
+from src.prompts.chain_cleaning import CHAIN_CLEANING_PROMPT, CHAIN_CLEANING_SYSTEM_PROMPT
+from src.utils.parallel import batch_process, ordered_batch_results
 
 logger = logging.getLogger(__name__)
 

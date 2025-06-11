@@ -2,7 +2,7 @@ from typing import Dict, List, Tuple, Any
 import logging
 import pandas as pd
 from pathlib import Path
-from knowledge_data_curation.src.utils.io import load_dataframe
+from src.utils.io import load_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -19,37 +19,6 @@ class DataLoader:
         self.factsheet_data_path = Path(config["paths"]["factsheet_data"])
         logger.info(f"Initialized DataLoader with industry_data={self.industry_data_path}, factsheet_data={self.factsheet_data_path}")
         
-    def load_industry_data(self) -> pd.DataFrame:
-        """
-        Load industry data from CSV
-        
-        Returns:
-            DataFrame with industry data
-        """
-        logger.info(f"Loading industry data from {self.industry_data_path}")
-        try:
-            df = load_dataframe(str(self.industry_data_path))
-            logger.info(f"Loaded industry data with shape {df.shape}")
-            return df
-        except Exception as e:
-            logger.error(f"Error loading industry data: {e}")
-            raise
-            
-    def load_factsheet_data(self) -> pd.DataFrame:
-        """
-        Load factsheet data from CSV
-        
-        Returns:
-            DataFrame with factsheet data
-        """
-        logger.info(f"Loading factsheet data from {self.factsheet_data_path}")
-        try:
-            df = load_dataframe(str(self.factsheet_data_path))
-            logger.info(f"Loaded factsheet data with shape {df.shape}")
-            return df
-        except Exception as e:
-            logger.error(f"Error loading factsheet data: {e}")
-            raise
             
     def get_unique_chains(self) -> List[str]:
         """
@@ -110,4 +79,65 @@ class DataLoader:
             return company_factsheets
         except Exception as e:
             logger.error(f"Error getting company factsheets: {e}")
+            raise
+    
+    def override_data(self, industry_df: pd.DataFrame, factsheet_df: pd.DataFrame) -> None:
+        """
+        Override the loaded data with augmented datasets
+        
+        Args:
+            industry_df: Augmented industry DataFrame
+            factsheet_df: Augmented factsheet DataFrame
+        """
+        logger.info("Overriding loaded data with augmented datasets")
+        logger.info(f"  - New industry data shape: {industry_df.shape}")
+        logger.info(f"  - New factsheet data shape: {factsheet_df.shape}")
+        
+        # Store the augmented data for future use
+        self._cached_industry_df = industry_df
+        self._cached_factsheet_df = factsheet_df
+        self._using_augmented_data = True
+        
+        logger.info("Data override completed - pipeline will now use augmented datasets")
+    
+    def load_industry_data(self) -> pd.DataFrame:
+        """
+        Load industry data from CSV or return cached augmented data
+        
+        Returns:
+            DataFrame with industry data
+        """
+        # If we have cached augmented data, use that instead
+        if hasattr(self, '_cached_industry_df') and self._cached_industry_df is not None:
+            logger.info("Using cached augmented industry data")
+            return self._cached_industry_df
+            
+        logger.info(f"Loading industry data from {self.industry_data_path}")
+        try:
+            df = load_dataframe(str(self.industry_data_path))
+            logger.info(f"Loaded industry data with shape {df.shape}")
+            return df
+        except Exception as e:
+            logger.error(f"Error loading industry data: {e}")
+            raise
+            
+    def load_factsheet_data(self) -> pd.DataFrame:
+        """
+        Load factsheet data from CSV or return cached augmented data
+        
+        Returns:
+            DataFrame with factsheet data
+        """
+        # If we have cached augmented data, use that instead
+        if hasattr(self, '_cached_factsheet_df') and self._cached_factsheet_df is not None:
+            logger.info("Using cached augmented factsheet data")
+            return self._cached_factsheet_df
+            
+        logger.info(f"Loading factsheet data from {self.factsheet_data_path}")
+        try:
+            df = load_dataframe(str(self.factsheet_data_path))
+            logger.info(f"Loaded factsheet data with shape {df.shape}")
+            return df
+        except Exception as e:
+            logger.error(f"Error loading factsheet data: {e}")
             raise 

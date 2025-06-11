@@ -1,0 +1,146 @@
+# Integrated Strategies Configuration
+# This configuration enables BOTH strategies for maximum training data enhancement:
+#
+# STRATEGY 1: Subchain Generation
+#   - Breaks long industry chains into smaller subchains using sliding window
+#   - Generates individual categories, 2-word, 3-word subchains, etc.
+#   - Dramatically increases training data volume (10-50x)
+#
+# STRATEGY 2: Synthetic Factsheet Generation  
+#   - Detects underrepresented industry chains (chains with few companies)
+#   - Generates realistic synthetic company factsheets for these chains
+#   - Balances training data across all industry categories
+#
+# Together these strategies work to:
+#   1. Increase data volume through subchains (Strategy 1)
+#   2. Balance data distribution through synthetic factsheets (Strategy 2)
+#   3. Create comprehensive training datasets for ColBERT
+
+# File Paths
+paths:
+  industry_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/industries_quickie.csv"
+  factsheet_data: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/data/all_factsheets_cleaned_quickie.csv"
+  output_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/output/"
+  logs_dir: "/Users/pragalbh.devsingh/Documents/work/models/ColBERT/knowledge_data_curation/logs/"
+
+reusability:
+  enable_reuse: true  # Master flag to enable/disable reusability features
+  reuse_cleaned_chains: true  # Reuse previously cleaned chains if available
+  reuse_elasticsearch_index: false  # Reuse existing elasticsearch index if available
+
+
+embeddings:
+  batch_size: 5  # Number of texts per batch for parallel embedding
+  parallel_threads: 5  # Number of parallel threads for embedding
+  rate_limit_delay: 0.001  # Delay between API calls to avoid rate limits
+
+# OpenAI Configuration
+openai:
+  model_chain_cleaner: "gpt-4.1-mini"
+  model_negative_generator: "gpt-4.1-mini"
+  model_factsheet_generator: "gpt-4.1"  # Use GPT-4 for higher quality synthetic factsheets
+  parallel_threads: 10
+  batch_size: 300
+  rate_limit: 100
+
+# Elasticsearch Configuration
+elasticsearch:
+  host: "localhost"
+  port: 9200
+  index_name: "industry_chains_parallel_v3"
+  embedding_model: "text-embedding-3-small"
+  username: "elastic"  # Default Elasticsearch username
+  # Password will be loaded from ELASTIC_PASSWORD environment variable
+  indexing_batch_size: 100  # Number of documents per batch for parallel indexing
+  indexing_threads: 20  # Number of parallel threads for indexing
+
+# Negative Sampling Configuration
+sampling:
+  batch_size: 10
+  hard_negative_count: 5
+  soft_negative_count: 2
+  nearest_neighbors: 10
+  window_size: 5
+  samples_per_window: 3
+  min_company_overlap: 1  # Minimum number of shared companie
+
+# Scoring Configuration
+scoring:
+  strategy: "binary"  # Options: "binary", "reranker"
+  reranker_model: "BAAI/bge-reranker-large"
+
+# 🔥 STRATEGY 1: Subchain Generation (Data Volume Enhancement)
+# Generates subchains from industry chains using sliding window approach
+# Example: "Tech>Software>Web>Frontend" becomes:
+#   - Individual: ["Tech", "Software", "Web", "Frontend"]  
+#   - 2-word: ["Tech>Software", "Software>Web", "Web>Frontend"]
+#   - 3-word: ["Tech>Software>Web", "Software>Web>Frontend"]
+subchain_generation:
+  enabled: true  # ✅ ENABLED - Strategy 1 is active
+  configurations:
+    - window_size: 1     # Individual categories (greatest data increase)
+      shift: 1
+      enabled: true
+    - window_size: 2     # 2-category subchains  
+      shift: 1           # Step by 1 for maximum coverage
+      enabled: false
+    - window_size: 3     # 3-category subchains
+      shift: 2           # Step by 2 for efficiency
+      enabled: true
+    - window_size: 5     # 5-category subchains (disabled for now)
+      shift: 3
+      enabled: false
+  deduplicate_subchains: true  # Remove duplicate subchains across all configurations
+
+# 🎯 STRATEGY 2: Synthetic Factsheet Generation (Data Balance Enhancement)  
+# Generates synthetic company factsheets for underrepresented industry chains
+# Applied to BOTH original chains AND subchains from Strategy 1
+synthetic_generation:
+  enabled: true  # ✅ ENABLED - Strategy 2 is active
+  min_companies_threshold: 2        # Chains with < 5 companies get synthetic factsheets
+  target_factsheets_per_chain: 2   # Generate 10 synthetic factsheets per underrepresented chain
+  max_sample_factsheets: 2          # Use up to 2 real factsheets as examples for LLM
+  enable_cache: true                # Cache synthetic data for reuse
+  reuse_existing: false              # Reuse cached data if configuration unchanged
+  cache_filename: "integrated_synthetic_factsheets.json"
+  
+  # 🚀 OPTIMIZED PARALLELIZATION SETTINGS
+  factsheets_per_call: 4            # Generate 3 factsheets per LLM call (reduces token usage)
+  parallel_chains: 10                # Process 4 chains simultaneously 
+  max_parallel_calls: 100            # Total parallel capacity (auto-optimized based on other settings)
+  
+  # Output file configurations
+  output_files:
+    augmented_industry_data: "integrated_augmented_industry_data.csv"
+    augmented_factsheet_data: "integrated_augmented_factsheet_data.csv" 
+    synthetic_generation_stats: "integrated_synthetic_generation_stats.json"
+  
+  # Quality control settings
+  quality_control:
+    min_factsheet_length: 100       # Minimum expected length for valid factsheets
+    max_retries_per_chain: 3        # Maximum retries if generation fails
+    validation_enabled: true        # Enable validation of generated factsheets
+
+# Pipeline Integration Strategy
+# The strategies work together in this order:
+# 1. Load industry chains and company factsheets
+# 2. Clean industry chains with LLM
+# 3. 🔥 STRATEGY 1: Generate subchains from cleaned chains
+# 4. 🎯 STRATEGY 2: Analyze both chains + subchains for imbalance  
+# 5. 🎯 STRATEGY 2: Generate synthetic factsheets for underrepresented chains/subchains
+# 6. Continue with negative generation using augmented data
+# 7. Generate triplets from both original + subchain + synthetic data
+# 8. Output comprehensive training datasets
+
+# Expected Results:
+# - Original chains: ~1000 training examples
+# - + Strategy 1 (subchains): ~10,000-50,000 training examples  
+# - + Strategy 2 (synthetic): Additional balanced coverage across all categories
+# - Final result: Comprehensive, balanced, high-volume training data
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_logging: true
+  log_file: "logs/integrated_strategies_pipeline.log" 

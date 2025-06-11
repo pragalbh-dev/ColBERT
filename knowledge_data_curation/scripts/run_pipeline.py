@@ -11,8 +11,8 @@ from pathlib import Path
 # Add the project root to the Python path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from knowledge_data_curation.src.pipelines.main_pipeline import ColBERTTrainingPipeline
-from knowledge_data_curation.src.utils.logger import Logger
+from src.pipelines.main_pipeline import ColBERTTrainingPipeline
+from src.utils.logger import Logger
 
 def main():
     """
