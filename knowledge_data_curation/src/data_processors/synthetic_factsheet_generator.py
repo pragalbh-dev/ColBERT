@@ -119,8 +119,9 @@ Create {batch_size} different factsheets with:
 - Vary the company size, focus areas, and specific details"""
 
         try:
-            # ✅ FIX: Add max_tokens and timeout to prevent hanging
-            completion = self.llm_client.client.beta.chat.completions.parse(
+            # ✅ FIX: Use openai module directly, not self.llm_client.client
+            import openai
+            completion = openai.beta.chat.completions.parse(
                 model=self.llm_client.model,
                 messages=[
                     {"role": "system", "content": "Generate realistic synthetic company factsheets. Return exactly the requested number of factsheets."},
@@ -286,69 +287,158 @@ Create {batch_size} different factsheets with:
         
         return chain_results
 
-    def generate_factsheets_for_chain(self, 
-                                    industry_chain: str, 
-                                    sample_factsheets: List[str], 
-                                    target_count: int) -> List[str]:
+    def generate_factsheets_for_chain_simple(self, 
+                                            industry_chain: str, 
+                                            sample_factsheets: List[str], 
+                                            target_count: int) -> List[str]:
         """
-        Legacy method - now uses OpenAI structured output with SyntheticFactsheet model
-        Returns a list of factsheet strings (for pipeline compatibility)
+        Generate factsheets for ONE chain with exactly ONE API call
+        Returns crisp, short factsheets (< 500 tokens each)
         """
         if not sample_factsheets:
             logger.warning(f"No sample factsheets provided for chain: {industry_chain}")
             return []
             
-        logger.info(f"Generating {target_count} factsheets for chain: {industry_chain}")
-        logger.debug(f"Using {len(sample_factsheets)} sample factsheet(s) as examples")
+        logger.info(f"Generating {target_count} factsheets for chain: {industry_chain} (1 API call)")
         
-        # Create sample context
-        samples_context = "\n---\n".join(sample_factsheets[:2])  # Limit to 2 samples to control prompt size
+        # Create concise sample context (only first sample to keep prompt small)
+        sample_context = sample_factsheets[0][:800] if sample_factsheets else ""  # Limit sample size
         
-        prompt = f"""Generate 1 unique, realistic company factsheet for a company in this industry chain: "{industry_chain}"
+        # Crisp, concise prompt focusing on SHORT factsheets
+        prompt = f"""Generate exactly {target_count} CRISP, CONCISE company factsheets for industry: "{industry_chain}"
 
-Use these sample factsheets as reference for style and format:
-{samples_context}
+SAMPLE FORMAT (use as reference):
+{sample_context}
 
-Create 1 factsheet with:
-- Unique company name and details
-- Realistic business description matching the industry chain
-- Similar length and structure to the samples
-- Vary the company size, focus areas, and specific details"""
+REQUIREMENTS:
+- Generate exactly {target_count} factsheets
+- Keep each factsheet under 300 words (crisp and concise)
+- Include: Company name, brief description, key products/services, target market
+- Make each company unique but realistic for this industry
+- Use professional, factual tone
+- NO lengthy descriptions or excessive detail"""
 
-        prompts = [prompt for _ in range(target_count)]
-        valid_factsheets = []
-        
         try:
-            for prompt in prompts:
-                completion = self.llm_client.client.beta.chat.completions.parse(
-                    model=self.llm_client.model,
-                    messages=[
-                        {"role": "system", "content": "Generate realistic synthetic company factsheets. Create exactly the requested number of factsheets."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format=SyntheticFactsheetBatch,
-                    max_tokens=16000,  # Limit to prevent hitting 32k limit
-                    timeout=120  # 2 minute timeout
-                )
-                parsed = completion.choices[0].message.parsed
-                if parsed and parsed.factsheets:
-                    for item in parsed.factsheets:
-                        if item.factsheet and item.factsheet.strip():
-                            valid_factsheets.append(item.factsheet.strip())
-                            
-            logger.info(f"Successfully generated {len(valid_factsheets)} factsheets for chain: {industry_chain}")
-            return valid_factsheets
+            # Single API call per chain
+            import openai
+            completion = openai.beta.chat.completions.parse(
+                model=self.llm_client.model,
+                messages=[
+                    {"role": "system", "content": "Generate crisp, concise company factsheets under 300 words each. Be factual and professional."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format=SyntheticFactsheetBatch,
+                max_tokens=4000,  # Reduced limit for crisp factsheets
+                timeout=60  # Reduced timeout
+            )
+            
+            parsed_response = completion.choices[0].message.parsed
+            if not parsed_response or not parsed_response.factsheets:
+                logger.warning(f"No factsheets generated for chain: {industry_chain}")
+                return []
+            
+            # Extract crisp factsheets
+            factsheets = [
+                item.factsheet.strip() 
+                for item in parsed_response.factsheets 
+                if item.factsheet and item.factsheet.strip()
+            ]
+            
+            logger.info(f"Generated {len(factsheets)} crisp factsheets for: {industry_chain}")
+            return factsheets
+            
         except Exception as e:
             logger.error(f"Error generating factsheets for chain {industry_chain}: {e}")
             return []
+
+    def batch_generate_factsheets_simple(self, 
+                                        chains_needing_data: List[str], 
+                                        chain_samples: Dict[str, List[str]]) -> Dict[str, List[Tuple[str, str]]]:
+        """
+        Simple parallel generation: exactly 1 API call per chain
+        Process multiple chains in parallel batches
+        """
+        logger.info(f"Simple batch generation for {len(chains_needing_data)} chains")
+        logger.info(f"Processing {self.parallel_chains} chains in parallel (1 call per chain)")
+        
+        results = {}
+        total_factsheets_generated = 0
+        
+        # Process chains in parallel batches
+        for i in range(0, len(chains_needing_data), self.parallel_chains):
+            batch_chains = chains_needing_data[i:i + self.parallel_chains]
+            batch_number = (i // self.parallel_chains) + 1
+            total_batches = math.ceil(len(chains_needing_data) / self.parallel_chains)
+            
+            logger.info(f"Processing batch {batch_number}/{total_batches} with {len(batch_chains)} chains")
+            
+            # Process current batch in parallel (1 call per chain)
+            with ThreadPoolExecutor(max_workers=len(batch_chains)) as executor:
+                futures = {
+                    executor.submit(
+                        self._process_single_chain_simple,
+                        chain,
+                        chain_samples.get(chain, [])
+                    ): chain
+                    for chain in batch_chains
+                }
+                
+                for future in as_completed(futures):
+                    chain = futures[future]
+                    try:
+                        chain_results = future.result()
+                        results[chain] = chain_results
+                        total_factsheets_generated += len(chain_results)
+                        logger.info(f"Completed chain: {chain} ({len(chain_results)} factsheets)")
+                    except Exception as e:
+                        logger.error(f"Error processing chain {chain}: {e}")
+                        results[chain] = []
+        
+        logger.info(f"Simple batch generation completed:")
+        logger.info(f"  - Processed {len(chains_needing_data)} chains")
+        logger.info(f"  - Generated {total_factsheets_generated} total factsheets")
+        logger.info(f"  - API calls made: {len(chains_needing_data)} (1 per chain)")
+        
+        return results
     
+    def _process_single_chain_simple(self, chain: str, samples: List[str]) -> List[Tuple[str, str]]:
+        """
+        Process a single chain with exactly 1 API call
+        """
+        if not samples:
+            logger.warning(f"No samples available for chain: {chain}")
+            return []
+        
+        # Generate factsheets with single API call
+        generated_factsheets = self.generate_factsheets_for_chain_simple(
+            chain, samples, self.target_count
+        )
+        
+        # Create (company_id, factsheet) tuples
+        chain_results = []
+        for factsheet in generated_factsheets:
+            company_id = self.generate_company_id(factsheet)
+            chain_results.append((company_id, factsheet))
+        
+        return chain_results
+
+    # Update main methods to use simplified approach
     def batch_generate_factsheets(self, 
                                 chains_needing_data: List[str], 
                                 chain_samples: Dict[str, List[str]]) -> Dict[str, List[Tuple[str, str]]]:
         """
-        Legacy method - delegates to optimized version
+        Main method - now uses simplified 1-call-per-chain approach
         """
-        return self.batch_generate_factsheets_optimized(chains_needing_data, chain_samples)
+        return self.batch_generate_factsheets_simple(chains_needing_data, chain_samples)
+
+    def generate_factsheets_for_chain(self, 
+                                    industry_chain: str, 
+                                    sample_factsheets: List[str], 
+                                    target_count: int) -> List[str]:
+        """
+        Main method - now uses simplified 1-call-per-chain approach
+        """
+        return self.generate_factsheets_for_chain_simple(industry_chain, sample_factsheets, target_count)
 
     def generate_company_id(self, factsheet: str) -> str:
         """
