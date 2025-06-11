@@ -8,7 +8,7 @@ import math
 
 from src.models.llm_client import OpenAIClient
 from src.utils.parallel import batch_process
-
+from src.models.pydantic import SyntheticFactsheetBatch
 logger = logging.getLogger(__name__)
 
 # Enhanced prompt template for batch generation
@@ -102,37 +102,46 @@ class SyntheticFactsheetGenerator:
             logger.warning(f"No sample factsheets provided for chain: {industry_chain}")
             return []
             
-        logger.debug(f"Generating batch of {batch_size} factsheets for chain: {industry_chain}")
+        logger.debug(f"Generating batch of {batch_size} factsheets for: {industry_chain}")
         
-        # Prepare sample factsheets text
-        samples_text = "\n\n--- SAMPLE FACTSHEET ---\n".join(sample_factsheets)
+        # Create sample context
+        samples_context = "\n---\n".join(sample_factsheets[:2])  # Limit to 2 samples to control prompt size
         
-        # Create batch prompt
-        prompt = BATCH_SYNTHETIC_FACTSHEET_PROMPT.format(
-            batch_size=batch_size,
-            industry_chain=industry_chain,
-            sample_factsheets=samples_text
-        )
-        
+        prompt = f"""Generate {batch_size} unique, realistic company factsheets for companies in this industry chain: "{industry_chain}"
+
+Use these sample factsheets as reference for style and format:
+{samples_context}
+
+Create {batch_size} different factsheets with:
+- Unique company names and details
+- Realistic business descriptions matching the industry chain
+- Similar length and structure to the samples
+- Vary the company size, focus areas, and specific details"""
+
         try:
-            from openai import OpenAI
-            from src.models.pydantic import SyntheticFactsheet
-            client = OpenAI()
-            factsheets = []
-            for _ in range(batch_size):
-                completion = client.beta.chat.completions.parse(
-                    model=self.llm_client.model,
-                    messages=[
-                        {"role": "system", "content": "You are tasked with creating a realistic synthetic company factsheet for a company operating in the industry chain: '" + industry_chain + "'."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    response_format=SyntheticFactsheet,
-                    temperature=0.8
-                )
-                parsed = completion.choices[0].message.parsed
-                factsheets.append(parsed.factsheet)
-            logger.debug(f"Successfully generated {len(factsheets)} factsheets in batch for chain: {industry_chain}")
+            # ✅ FIX: Add max_tokens and timeout to prevent hanging
+            completion = self.llm_client.client.beta.chat.completions.parse(
+                model=self.llm_client.model,
+                messages=[
+                    {"role": "system", "content": "Generate realistic synthetic company factsheets. Return exactly the requested number of factsheets."},
+                    {"role": "user", "content": prompt}
+                ],
+                response_format=SyntheticFactsheetBatch,
+                max_tokens=16000,  # Limit to prevent hitting 32k limit
+                timeout=120  # 2 minute timeout
+            )
+            
+            parsed_response = completion.choices[0].message.parsed
+            if not parsed_response or not parsed_response.factsheets:
+                logger.warning(f"No factsheets generated for chain: {industry_chain}")
+                return []
+            
+            # Extract factsheet content from parsed response
+            factsheets = [item.factsheet for item in parsed_response.factsheets if item.factsheet and item.factsheet.strip()]
+            
+            logger.debug(f"Generated {len(factsheets)} factsheets for: {industry_chain}")
             return factsheets
+            
         except Exception as e:
             logger.error(f"Error generating batch factsheets for chain {industry_chain}: {e}")
             return []
@@ -292,34 +301,43 @@ class SyntheticFactsheetGenerator:
         logger.info(f"Generating {target_count} factsheets for chain: {industry_chain}")
         logger.debug(f"Using {len(sample_factsheets)} sample factsheet(s) as examples")
         
-        # Prepare sample factsheets text
-        samples_text = "\n\n--- SAMPLE FACTSHEET ---\n".join(sample_factsheets)
+        # Create sample context
+        samples_context = "\n---\n".join(sample_factsheets[:2])  # Limit to 2 samples to control prompt size
         
-        # Generate factsheets in parallel using OpenAI structured output
-        from openai import OpenAI
-        from src.models.pydantic import SyntheticFactsheet
-        client = OpenAI()
-        prompts = []
-        for i in range(target_count):
-            prompt = f"""You are tasked with creating a realistic company factsheet for a company operating in the industry chain: \"{industry_chain}\".\n\nBased on the sample factsheet(s) provided below, generate a NEW, DISTINCT company factsheet that follows the same format and structure but describes a different company in the same industry.\n\nSAMPLE FACTSHEET(S):\n{samples_text}\n\nREQUIREMENTS:\n1. Create a factsheet for a NEW company (different name, different details)\n2. Follow the exact same structure and format as the sample(s)\n3. Include realistic information across all dimensions:\n   - Products, services, and offerings\n   - Industry and target audience\n   - Unique selling propositions (USPs) and key differentiators\n   - Business model\n   - Technology used\n   - Revenue model\n4. Ensure the company logically fits within the industry chain: {industry_chain}\n5. Make the company realistic and believable\n6. Use professional language and formatting consistent with the samples\n7. Do not copy exact phrases or company names from the samples\n\nGenerate ONLY the factsheet content, no additional commentary or explanations.\n\nNEW COMPANY FACTSHEET:"""
-            prompts.append(prompt)
+        prompt = f"""Generate 1 unique, realistic company factsheet for a company in this industry chain: "{industry_chain}"
+
+Use these sample factsheets as reference for style and format:
+{samples_context}
+
+Create 1 factsheet with:
+- Unique company name and details
+- Realistic business description matching the industry chain
+- Similar length and structure to the samples
+- Vary the company size, focus areas, and specific details"""
+
+        prompts = [prompt for _ in range(target_count)]
+        valid_factsheets = []
         
-        factsheets = []
         try:
             for prompt in prompts:
-                completion = client.beta.chat.completions.parse(
+                completion = self.llm_client.client.beta.chat.completions.parse(
                     model=self.llm_client.model,
                     messages=[
-                        {"role": "system", "content": f"You are tasked with creating a realistic synthetic company factsheet for a company operating in the industry chain: '{industry_chain}'."},
+                        {"role": "system", "content": "Generate realistic synthetic company factsheets. Create exactly the requested number of factsheets."},
                         {"role": "user", "content": prompt}
                     ],
-                    response_format=SyntheticFactsheet,
-                    temperature=0.8
+                    response_format=SyntheticFactsheetBatch,
+                    max_tokens=16000,  # Limit to prevent hitting 32k limit
+                    timeout=120  # 2 minute timeout
                 )
                 parsed = completion.choices[0].message.parsed
-                factsheets.append(parsed.factsheet)
-            logger.info(f"Successfully generated {len(factsheets)} factsheets for chain: {industry_chain}")
-            return factsheets
+                if parsed and parsed.factsheets:
+                    for item in parsed.factsheets:
+                        if item.factsheet and item.factsheet.strip():
+                            valid_factsheets.append(item.factsheet.strip())
+                            
+            logger.info(f"Successfully generated {len(valid_factsheets)} factsheets for chain: {industry_chain}")
+            return valid_factsheets
         except Exception as e:
             logger.error(f"Error generating factsheets for chain {industry_chain}: {e}")
             return []
