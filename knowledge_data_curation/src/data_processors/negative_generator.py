@@ -4,7 +4,7 @@ import random
 import re
 import json
 from src.models.llm_client import OpenAIClient
-from src.prompts.negative_sampling import NEGATIVE_SAMPLING_PROMPT, NEGATIVE_SAMPLING_SYSTEM_PROMPT
+from src.prompts.negative_sampling import NEGATIVE_SAMPLING_PROMPT, NEGATIVE_SAMPLING_SYSTEM_PROMPT, NEGATIVE_SAMPLING_SUBCHAIN_SYSTEM_PROMPT
 from src.utils.elasticsearch import ESClient
 from src.utils.parallel import batch_process
 from src.models.pydantic import NegativeSamplingResponse
@@ -198,10 +198,12 @@ class NegativeSampleGenerator:
             from openai import OpenAI
             from src.models.pydantic import NegativeSamplingResponse
             client = OpenAI()
+            sys_message=NEGATIVE_SAMPLING_SYSTEM_PROMPT if len(chain.split(">")) > 3 else NEGATIVE_SAMPLING_SUBCHAIN_SYSTEM_PROMPT
             completion = client.beta.chat.completions.parse(
                 model=self.llm_client.model,
+                
                 messages=[
-                    {"role": "system", "content": NEGATIVE_SAMPLING_SYSTEM_PROMPT},
+                    {"role": "system", "content": sys_message},
                     {"role": "user", "content": NEGATIVE_SAMPLING_PROMPT.format(
                         chain=chain,
                         hard_candidates=hard_candidates_str,

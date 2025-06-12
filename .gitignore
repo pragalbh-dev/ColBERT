@@ -57,3 +57,6 @@ elasticsearc*
 benchmarking.ipynb
 benchmarks_batch.py
 benchmarks2.py
+output_archive/*
+output_mini/*
+output_nano/*

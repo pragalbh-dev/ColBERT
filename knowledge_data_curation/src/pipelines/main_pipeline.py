@@ -13,6 +13,7 @@ from src.data_processors.subchain_generator import SubchainGenerator
 from src.data_processors.imbalance_analyzer import DataImbalanceAnalyzer
 from src.data_processors.synthetic_factsheet_generator import SyntheticFactsheetGenerator
 from src.data_processors.data_normalizer import DataNormalizer
+from src.data_processors.industry_aspect_extractor import IndustryAspectExtractor
 from src.utils.cache_manager import SyntheticDataCacheManager
 from src.pipelines.triplet_generator import TripletGenerator
 from src.utils.io import save_json, save_csv
@@ -45,6 +46,9 @@ class ColBERTTrainingPipeline:
         self.synthetic_generator = SyntheticFactsheetGenerator(self.config)
         self.data_normalizer = DataNormalizer(self.config)
         self.cache_manager = SyntheticDataCacheManager(self.config)
+        
+        # Initialize aspect extraction component (Strategy 3)
+        self.aspect_extractor = IndustryAspectExtractor(self.config)
         
         # Initialize paths
         self.output_dir = Path(self.config["paths"]["output_dir"])
@@ -169,6 +173,9 @@ class ColBERTTrainingPipeline:
         logger.info("Step 3: Generating subchains from cleaned chains")
         subchain_data = self.subchain_generator.generate_all_subchains(cleaned_chains)
         
+        # Step 3.5: Extract structured aspects from chains and subchains (Strategy 3)
+        aspect_results = self._process_aspect_extraction_step(cleaned_chains, subchain_data)
+        
         # Step 4: Initialize negative generator for chains
         logger.info("Step 4: Initializing negative generator for chains")
         self.negative_generator.initialize(cleaned_company_chains)
@@ -251,17 +258,26 @@ class ColBERTTrainingPipeline:
         logger.info("Step 12: Saving results")
         self._save_results(triplets, subchain_triplets, subchain_data)
         
+        # Get aspect extraction token usage
+        aspect_extraction_usage = {}
+        if aspect_results.get("enabled", False):
+            aspect_extraction_usage = self.aspect_extractor.get_token_usage_stats()
+            logger.info(f"Aspect extraction token usage: {aspect_extraction_usage}")
+        
         # Log final token usage statistics
         total_usage = {
             "chain_cleaning": chain_cleaning_usage,
             "chain_negative_generation": negative_gen_usage,
-            "subchain_negative_generation": subchain_negative_gen_usage
+            "subchain_negative_generation": subchain_negative_gen_usage,
+            "aspect_extraction": aspect_extraction_usage
         }
         logger.info("Final token usage statistics:")
         logger.info(f"Chain cleaning: {chain_cleaning_usage}")
         logger.info(f"Chain negative generation: {negative_gen_usage}")
         if subchain_negative_gen_usage:
             logger.info(f"Subchain negative generation: {subchain_negative_gen_usage}")
+        if aspect_extraction_usage:
+            logger.info(f"Aspect extraction: {aspect_extraction_usage}")
         
         # Save token usage statistics
         token_stats_path = self.output_dir / "token_usage_stats.json"
@@ -729,6 +745,108 @@ class ColBERTTrainingPipeline:
         
         logger.info("Synthetic data generation step completed successfully")
         return augmented_industry_df, augmented_factsheet_df
+    
+    def _process_aspect_extraction_step(self, 
+                                      cleaned_chains: Dict[str, str], 
+                                      subchain_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process aspect extraction for cleaned chains and subchains (Strategy 3)
+        
+        Args:
+            cleaned_chains: Dictionary mapping original chains to cleaned chains
+            subchain_data: Subchain data from SubchainGenerator
+            
+        Returns:
+            Dictionary containing aspect extraction results and configuration
+        """
+        aspect_config = self.config.get("aspect_extraction", {})
+        
+        # Check if aspect extraction is enabled globally
+        if not aspect_config.get("enabled", False):
+            logger.info("Step 3.5: Aspect extraction is disabled - skipping")
+            return {"enabled": False, "chains_processed": False, "subchains_processed": False}
+        
+        logger.info("Step 3.5: Starting aspect extraction for industry chains and subchains")
+        
+        # Check individual configurations
+        process_chains = aspect_config.get("process_cleaned_chains", True)
+        process_subchains = aspect_config.get("process_subchains", True)
+        
+        results = {
+            "enabled": True,
+            "chains_processed": False,
+            "subchains_processed": False,
+            "cleaned_chains_aspects": {},
+            "subchains_aspects": {},
+            "stats": {}
+        }
+        
+        # Process cleaned chains if enabled
+        if process_chains:
+            logger.info("Step 3.5a: Processing cleaned chains for aspect extraction")
+            try:
+                results["cleaned_chains_aspects"] = self.aspect_extractor.process_cleaned_chains(cleaned_chains)
+                results["chains_processed"] = True
+                logger.info(f"Successfully extracted aspects for {len(results['cleaned_chains_aspects'])} cleaned chains")
+            except Exception as e:
+                logger.error(f"Error processing cleaned chains for aspects: {e}")
+                results["chains_processed"] = False
+        else:
+            logger.info("Step 3.5a: Cleaned chain aspect extraction is disabled - skipping")
+        
+        # Process subchains if enabled and available
+        if process_subchains and subchain_data.get("enabled", False):
+            logger.info("Step 3.5b: Processing subchains for aspect extraction")
+            try:
+                results["subchains_aspects"] = self.aspect_extractor.process_subchains(subchain_data)
+                results["subchains_processed"] = True
+                logger.info(f"Successfully extracted aspects for {len(results['subchains_aspects'])} subchains")
+            except Exception as e:
+                logger.error(f"Error processing subchains for aspects: {e}")
+                results["subchains_processed"] = False
+        elif process_subchains and not subchain_data.get("enabled", False):
+            logger.info("Step 3.5b: Subchain generation is disabled - skipping subchain aspect extraction")
+        else:
+            logger.info("Step 3.5b: Subchain aspect extraction is disabled - skipping")
+        
+        # Calculate statistics
+        chains_count = len(results["cleaned_chains_aspects"])
+        subchains_count = len(results["subchains_aspects"])
+        total_count = chains_count + subchains_count
+        
+        results["stats"] = {
+            "cleaned_chains_processed": chains_count,
+            "subchains_processed": subchains_count,
+            "total_aspects_extracted": total_count,
+            "chains_extraction_enabled": process_chains,
+            "subchains_extraction_enabled": process_subchains,
+            "subchain_generation_enabled": subchain_data.get("enabled", False)
+        }
+        
+        # Save comprehensive results to pipeline output
+        if total_count > 0:
+            comprehensive_results = {
+                "cleaned_chains_aspects": results["cleaned_chains_aspects"],
+                "subchains_aspects": results["subchains_aspects"],
+                "stats": results["stats"],
+                "configuration": {
+                    "process_cleaned_chains": process_chains,
+                    "process_subchains": process_subchains,
+                    "subchain_generation_enabled": subchain_data.get("enabled", False)
+                }
+            }
+            
+            # Save to main pipeline output directory
+            aspect_results_path = self.output_dir / "aspect_extraction_results.json"
+            save_json(comprehensive_results, str(aspect_results_path))
+            logger.info(f"Saved comprehensive aspect extraction results to: {aspect_results_path}")
+        
+        logger.info("Step 3.5: Aspect extraction completed:")
+        logger.info(f"  - Cleaned chains: {chains_count} ({'enabled' if process_chains else 'disabled'})")
+        logger.info(f"  - Subchains: {subchains_count} ({'enabled' if process_subchains else 'disabled'})")
+        logger.info(f"  - Total aspects extracted: {total_count}")
+        
+        return results
     
     @classmethod
     def load_from_checkpoint(cls, config_path: str, checkpoint_dir: str) -> 'ColBERTTrainingPipeline':

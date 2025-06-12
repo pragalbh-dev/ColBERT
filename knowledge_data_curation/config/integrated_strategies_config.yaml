@@ -36,9 +36,10 @@ embeddings:
 
 # OpenAI Configuration
 openai:
-  model_chain_cleaner: "gpt-4.1-mini"
-  model_negative_generator: "gpt-4.1-mini"
+  model_chain_cleaner: "gpt-4.1-nano"
+  model_negative_generator: "gpt-4.1-nano"
   model_factsheet_generator: "gpt-4.1-mini"
+  model_aspect_extractor: "gpt-4.1-mini"  # Model for aspect extraction (NEW)
   parallel_threads: 10
   batch_size: 300
   rate_limit: 100
@@ -57,10 +58,10 @@ elasticsearch:
 # Negative Sampling Configuration
 sampling:
   batch_size: 10
-  hard_negative_count: 5
+  hard_negative_count: 6
   soft_negative_count: 2
-  nearest_neighbors: 10
-  window_size: 5
+  nearest_neighbors: 24
+  window_size: 4
   samples_per_window: 3
   min_company_overlap: 1  # Minimum number of shared companie
 
@@ -95,11 +96,12 @@ subchain_generation:
 # 🎯 STRATEGY 2: Synthetic Factsheet Generation (Data Balance Enhancement)  
 # Generates synthetic company factsheets for underrepresented industry chains
 # Applied to BOTH original chains AND subchains from Strategy 1
+
 synthetic_generation:
   enabled: true  # ✅ ENABLED - Strategy 2 is active
-  min_companies_threshold: 2        # Chains with < 5 companies get synthetic factsheets
-  target_factsheets_per_chain: 2   # Generate 10 synthetic factsheets per underrepresented chain
-  max_sample_factsheets: 2          # Use up to 2 real factsheets as examples for LLM
+  min_companies_threshold: 5        # Chains with < 5 companies get synthetic factsheets
+  target_factsheets_per_chain: 5   # Generate 10 synthetic factsheets per underrepresented chain
+  max_sample_factsheets: 1         # Use up to 2 real factsheets as examples for LLM
   enable_cache: true                # Cache synthetic data for reuse
   reuse_existing: false              # Reuse cached data if configuration unchanged
   cache_filename: "integrated_synthetic_factsheets.json"
@@ -118,7 +120,7 @@ synthetic_generation:
   # Quality control settings
   quality_control:
     min_factsheet_length: 100       # Minimum expected length for valid factsheets
-    max_retries_per_chain: 3        # Maximum retries if generation fails
+    max_retries_per_chain: 1        # Maximum retries if generation fails
     validation_enabled: true        # Enable validation of generated factsheets
 
 # Pipeline Integration Strategy
@@ -137,6 +139,48 @@ synthetic_generation:
 # - + Strategy 1 (subchains): ~10,000-50,000 training examples  
 # - + Strategy 2 (synthetic): Additional balanced coverage across all categories
 # - Final result: Comprehensive, balanced, high-volume training data
+
+# 🎯 STRATEGY 3: Industry Aspect Extraction (Structured Query Enhancement)
+# Extracts structured aspects from industry chains and subchains
+# Creates additional training queries from structured aspects
+aspect_extraction:
+  enabled: true  # ✅ ENABLED - Strategy 3 is active
+  parallel_threads: 10              # Number of parallel threads for aspect extraction
+  batch_size: 50                    # Number of chains per batch
+  
+  # Processing configuration
+  process_cleaned_chains: true      # Extract aspects from cleaned chains
+  process_subchains: false          # Extract aspects from subchains (if subchain generation enabled)
+  
+  # Output file configurations
+  output_files:
+    cleaned_chains_aspects: "cleaned_chains_aspects.json"
+    subchains_aspects: "subchains_aspects.json"
+    comprehensive_aspects: "comprehensive_aspects.json"
+    
+  # Quality control settings
+  timeout_per_chain: 60            # Timeout in seconds per chain extraction
+  max_retries: 1                   # Maximum retries for failed extractions
+  
+# Pipeline Integration Strategy (Updated)
+# The strategies now work together in this order:
+# 1. Load industry chains and company factsheets
+# 2. Clean industry chains with LLM
+# 2.5. 🎯 STRATEGY 2: Analyze data imbalance and generate synthetic factsheets (if enabled)
+# 3. 🔥 STRATEGY 1: Generate subchains from cleaned chains (if enabled)
+# 3.5. 🎯 STRATEGY 3: Extract structured aspects from chains + subchains (if enabled) (NEW)
+# 4. Initialize negative generator for chains
+# 5. Generate negative chains and subchains
+# 6. Generate query-factsheet mappings (positive/negative)
+# 7. Generate final triplets
+# 8. Output comprehensive training datasets
+
+# Expected Results (Updated):
+# - Original chains: ~1000 training examples
+# - + Strategy 1 (subchains): ~10,000-50,000 training examples  
+# - + Strategy 2 (synthetic): Additional balanced coverage across all categories
+# - + Strategy 3 (aspects): 6x multiplier from structured aspects per chain/subchain
+# - Final result: Massive, balanced, structured training dataset
 
 # Logging Configuration
 logging:
