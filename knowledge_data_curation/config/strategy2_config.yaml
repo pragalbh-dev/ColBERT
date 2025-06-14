@@ -3,8 +3,8 @@
 # Strategy 2 works IN ADDITION to Strategy 1, not instead of it
 
 paths:
-  industry_data: "data/industry_df.csv"
-  factsheet_data: "data/company_factsheets_df.csv"
+  industry_data: "data/industry_df_quickie.csv"
+  factsheet_data: "data/company_factsheets_df_quickie.csv"
   output_dir: "output/"
 
 # OpenAI Configuration
@@ -20,7 +20,7 @@ openai:
 elasticsearch:
   host: "localhost"
   port: 9200
-  index_name: "industry_chains"
+  index_name: "industry_chains_quickie"
   embedding_model: "text-embedding-3-small"
 
 # Negative Sampling Configuration

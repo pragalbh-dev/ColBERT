@@ -48,7 +48,7 @@ openai:
 elasticsearch:
   host: "localhost"
   port: 9200
-  index_name: "industry_chains_parallel_v3"
+  index_name: "industry_chains_parallel_quickie"
   embedding_model: "text-embedding-3-small"
   username: "elastic"  # Default Elasticsearch username
   # Password will be loaded from ELASTIC_PASSWORD environment variable

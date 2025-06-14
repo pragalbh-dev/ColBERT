@@ -87,20 +87,11 @@ class DataNormalizer:
         synthetic_industry_rows = []
         
         for cleaned_chain, factsheet_tuples in synthetic_data.items():
-            # Get an original chain for this cleaned chain (use first one)
-            original_chains = cleaned_to_original.get(cleaned_chain, [])
-            if not original_chains:
-                logger.warning(f"No original chain found for cleaned chain: {cleaned_chain}")
-                continue
-                
-            # Use the first original chain as template
-            original_chain = original_chains[0]
-            
             # Create industry entries for all synthetic companies in this chain
             for company_id, factsheet in factsheet_tuples:
                 synthetic_industry_rows.append({
                     "company_id": company_id,
-                    "industry_chain_hierarchy": original_chain
+                    "industry_chain_hierarchy": cleaned_chain
                 })
         
         synthetic_industry_df = pd.DataFrame(synthetic_industry_rows)

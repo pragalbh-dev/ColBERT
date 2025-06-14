@@ -88,8 +88,20 @@ class TripletGenerator:
                 # Collect all company IDs from parent chains
                 subchain_company_ids = []
                 for parent_chain in parent_chains:
+                    # First try the cleaned parent chain
                     if parent_chain in self.chain_to_companies:
                         subchain_company_ids.extend(self.chain_to_companies[parent_chain])
+                    else:
+                        # If cleaned parent chain doesn't exist, try original parent chain
+                        original_parent = None
+                        for orig, cleaned in self.cleaned_chains.items():
+                            if cleaned == parent_chain:
+                                original_parent = orig
+                                break
+                        
+                        if original_parent and original_parent in self.chain_to_companies:
+                            subchain_company_ids.extend(self.chain_to_companies[original_parent])
+                            print(f"Subchain mapping fallback: Using original parent '{original_parent}' for subchain '{subchain}'")
                 
                 # Remove duplicates and add to mapping
                 if subchain_company_ids:
@@ -106,6 +118,20 @@ class TripletGenerator:
         """Get positive factsheets for a given query (chain or subchain)"""
         # Direct lookup from the chain_to_companies mapping
         company_ids = self.chain_to_companies.get(query, [])
+        
+        # If not found and query looks like a cleaned chain, try to find original chain
+        if not company_ids and query in self.cleaned_chains.values():
+            # Find the original chain for this cleaned chain
+            original_chain = None
+            for orig, cleaned in self.cleaned_chains.items():
+                if cleaned == query:
+                    original_chain = orig
+                    break
+            
+            if original_chain:
+                company_ids = self.chain_to_companies.get(original_chain, [])
+                if company_ids:
+                    print(f"Fallback: Found {len(company_ids)} companies for original chain '{original_chain}' instead of cleaned chain '{query}'")
         
         # Filter to only those with factsheets
         positive_company_ids = [cid for cid in company_ids if cid in self.all_factsheets]
@@ -134,18 +160,21 @@ class TripletGenerator:
         total_negatives = self.negative_to_positive_ratio
         hard_count = int(total_negatives * self.hard_to_soft_ratio / (self.hard_to_soft_ratio + 1))
         soft_count = total_negatives - hard_count
-        
+        print(f"Fetching negatives for {query}")
         # Get hard negative company IDs
         hard_negative_company_ids = []
-        for neg_query in hard_negative_queries:
+        for neg_query in hard_negative_queries: 
+            
             company_ids = self.get_positive_factsheets_for_query(neg_query)
             hard_negative_company_ids.extend(company_ids)
+            print(f"Found {len(company_ids)} hard negative factsheets for query: {neg_query}")
         
         # Get soft negative company IDs
         soft_negative_company_ids = []
         for neg_query in soft_negative_queries:
             company_ids = self.get_positive_factsheets_for_query(neg_query)
             soft_negative_company_ids.extend(company_ids)
+            print(f"Found {len(company_ids)} soft negative factsheets for query: {neg_query}")
         
         # Remove duplicates and excluded IDs
         hard_negative_company_ids = [cid for cid in set(hard_negative_company_ids) 
