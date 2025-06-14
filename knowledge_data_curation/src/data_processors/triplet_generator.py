@@ -77,6 +77,26 @@ class TripletGenerator:
         
         print(f"Created direct mappings for {len(self.chain_to_companies)} industry chains")
         
+        # Load reverse mappings and extend chain_to_companies with subchain mappings
+        with open(os.path.join(self.subchains_dir, 'reverse_mappings.json'), 'r') as f:
+            reverse_mappings = json.load(f)
+        
+        # Add subchain mappings to chain_to_companies
+        subchain_mappings = reverse_mappings.get('subchain_to_cleaned_chains', {})
+        for subchain, parent_chains in subchain_mappings.items():
+            if subchain not in self.chain_to_companies:
+                # Collect all company IDs from parent chains
+                subchain_company_ids = []
+                for parent_chain in parent_chains:
+                    if parent_chain in self.chain_to_companies:
+                        subchain_company_ids.extend(self.chain_to_companies[parent_chain])
+                
+                # Remove duplicates and add to mapping
+                if subchain_company_ids:
+                    self.chain_to_companies[subchain] = list(set(subchain_company_ids))
+        
+        print(f"Extended mappings with subchains. Total mappings: {len(self.chain_to_companies)}")
+        
         # Load aspect data
         with open(os.path.join(self.aspect_dir, 'cleaned_chains_aspects.json'), 'r') as f:
             self.aspect_data = json.load(f)
